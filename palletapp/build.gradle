@@ -1,0 +1,18 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.smproduce.palletization'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.smproduce.palletization'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        buildConfigField 'String', 'PAGE_URL', '"https://smproduceprod.uk/pages/tc26_pallet.php"'
+        buildConfigField 'String', 'DW_ACTION', '"com.smproduce.palletization.SCAN"'
+    }
+    buildFeatures { buildConfig true }
+    buildTypes { release { minifyEnabled false } debug { } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_11; targetCompatibility JavaVersion.VERSION_11 }
+}
