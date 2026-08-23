@@ -1,0 +1,22 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.smproduce.casescanner'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.smproduce.casescanner'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/pages/api/tc26_case_scan.php"'
+        buildConfigField 'String', 'API_KEY', '"-BDg9ZAWUo_hsdzn75wpul6t0HoNYE9kStyN2lf_Uq8"'
+        buildConfigField 'String', 'DW_ACTION', '"com.smproduce.casescanner.SCAN"'
+    }
+    buildFeatures { buildConfig true }
+    buildTypes {
+        release { minifyEnabled false }
+        debug { applicationIdSuffix '.debug'; versionNameSuffix '-debug' }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_11; targetCompatibility JavaVersion.VERSION_11 }
+}
