@@ -1,0 +1,18 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.smproduce.shipping'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.smproduce.shipping'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        buildConfigField 'String', 'PAGE_URL', '"https://smproduceprod.uk/pages/tc26_shipping.php"'
+        buildConfigField 'String', 'DW_ACTION', '"com.smproduce.shipping.SCAN"'
+    }
+    buildFeatures { buildConfig true }
+    buildTypes { release { minifyEnabled false } debug { } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_11; targetCompatibility JavaVersion.VERSION_11 }
+}
