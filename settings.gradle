@@ -15,5 +15,3 @@ dependencyResolutionManagement {
 rootProject.name = 'SMProduceTC26'
 include ':app'
 include ':warehouseapp'
-include ':palletapp'
-include ':shippingapp'
