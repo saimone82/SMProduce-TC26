@@ -12,6 +12,8 @@ import org.json.*;
 
 public class MainActivity extends Activity {
     static final String PROFILE="SM_PRODUCE_WAREHOUSE";
+    static final String DW_API_ACTION="com.symbol.datawedge.api.ACTION";
+    static final String DW_SET_CONFIG="com.symbol.datawedge.api.SET_CONFIG";
     static final String DATA="com.symbol.datawedge.data_string";
     static final String PREFS="warehouse_offline";
     static final String QKEY="queue";
@@ -22,19 +24,13 @@ public class MainActivity extends Activity {
     Button back;
     boolean inWeb=false;
     String currentMode="";
-    StringBuilder keyBuf=new StringBuilder();
-    long lastKeyAt=0,lastScanAt=0;
+    long lastScanAt=0;
     String lastScan="";
 
     String pendingScan="";
     int pendingAttempts=0;
     final Handler scanHandler=new Handler(Looper.getMainLooper());
-    final Handler keyHandler=new Handler(Looper.getMainLooper());
-    final Runnable flushKeyBuffer=()->{
-        String s=keyBuf.toString().trim();
-        keyBuf.setLength(0);
-        if(s.length()>=4) acceptScan(s,"keystroke");
-    };
+    final Handler ui=new Handler(Looper.getMainLooper());
 
     final BroadcastReceiver rx=new BroadcastReceiver(){
         @Override public void onReceive(Context c,Intent i){
@@ -51,41 +47,33 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         buildUi();
-        setupDataWedge();
-        IntentFilter f=new IntentFilter(BuildConfig.DW_ACTION);
-        if(Build.VERSION.SDK_INT>=33)registerReceiver(rx,f,Context.RECEIVER_EXPORTED);else registerReceiver(rx,f);
+        registerScanReceiver();
         registerReceiver(netRx,new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+        ui.postDelayed(this::setupDataWedge,500);
         updateNetStatus();
     }
 
-    @Override protected void onResume(){super.onResume();setupDataWedge();updateNetStatus();if(isOnline())syncOfflineQueue();}
+    void registerScanReceiver(){
+        IntentFilter f=new IntentFilter();
+        f.addAction(BuildConfig.DW_ACTION);
+        f.addCategory(Intent.CATEGORY_DEFAULT);
+        if(Build.VERSION.SDK_INT>=33)registerReceiver(rx,f,Context.RECEIVER_EXPORTED);else registerReceiver(rx,f);
+    }
+
+    @Override protected void onResume(){
+        super.onResume();
+        ui.postDelayed(this::setupDataWedge,300);
+        updateNetStatus();
+        if(isOnline())syncOfflineQueue();
+    }
 
     @Override protected void onDestroy(){
         scanHandler.removeCallbacksAndMessages(null);
-        keyHandler.removeCallbacksAndMessages(null);
+        ui.removeCallbacksAndMessages(null);
         try{unregisterReceiver(rx);}catch(Exception ignored){}
         try{unregisterReceiver(netRx);}catch(Exception ignored){}
         if(web!=null)web.destroy();
         super.onDestroy();
-    }
-
-    @Override public boolean dispatchKeyEvent(KeyEvent e){
-        if(e.getAction()!=KeyEvent.ACTION_DOWN)return super.dispatchKeyEvent(e);
-        int k=e.getKeyCode();long now=System.currentTimeMillis();
-        if(now-lastKeyAt>500)keyBuf.setLength(0);lastKeyAt=now;
-        if(k==KeyEvent.KEYCODE_ENTER||k==KeyEvent.KEYCODE_NUMPAD_ENTER){
-            keyHandler.removeCallbacks(flushKeyBuffer);
-            String s=keyBuf.toString().trim();keyBuf.setLength(0);
-            if(!s.isEmpty()){acceptScan(s,"keystroke");return true;}
-        }
-        int u=e.getUnicodeChar();
-        if(u>=32&&u<=126){
-            keyBuf.append((char)u);
-            keyHandler.removeCallbacks(flushKeyBuffer);
-            keyHandler.postDelayed(flushKeyBuffer,140);
-            return true;
-        }
-        return super.dispatchKeyEvent(e);
     }
 
     void buildUi(){
@@ -113,7 +101,7 @@ public class MainActivity extends Activity {
         body.addView(home,new FrameLayout.LayoutParams(-1,-1));
 
         web=new WebView(this);web.setVisibility(View.GONE);web.setBackgroundColor(Color.rgb(11,22,34));web.setFocusable(true);web.setFocusableInTouchMode(true);
-        WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setDatabaseEnabled(true);ws.setCacheMode(WebSettings.LOAD_DEFAULT);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setUserAgentString(ws.getUserAgentString()+" SMProduceWarehouse/1.3.6");
+        WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setDatabaseEnabled(true);ws.setCacheMode(WebSettings.LOAD_DEFAULT);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setUserAgentString(ws.getUserAgentString()+" SMProduceWarehouse/1.3.7");
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,true);
         web.setWebViewClient(new WebViewClient(){
             @Override public void onPageFinished(WebView v,String url){
@@ -145,9 +133,9 @@ public class MainActivity extends Activity {
     void acceptScan(String code,String source){
         code=code==null?"":code.trim();if(code.isEmpty())return;
         long now=System.currentTimeMillis();
-        if(code.equals(lastScan)&&now-lastScanAt<800)return;
+        if(code.equals(lastScan)&&now-lastScanAt<1200)return;
         lastScan=code;lastScanAt=now;
-        Toast.makeText(this,"SCAN ["+source+"]: "+code,Toast.LENGTH_SHORT).show();
+        Toast.makeText(this,"SCAN: "+code,Toast.LENGTH_SHORT).show();
         deliverScan(code);
     }
 
@@ -279,14 +267,67 @@ public class MainActivity extends Activity {
         }
     }
 
-    void dw(Bundle cfg){Intent i=new Intent("com.symbol.datawedge.api.ACTION");i.setPackage("com.symbol.datawedge");i.putExtra("com.symbol.datawedge.api.SET_CONFIG",cfg);sendBroadcast(i);}
-    Bundle base(String mode){Bundle p=new Bundle();p.putString("PROFILE_NAME",PROFILE);p.putString("PROFILE_ENABLED","true");p.putString("CONFIG_MODE",mode);return p;}
+    void sendDW(Bundle config){
+        Intent i=new Intent(DW_API_ACTION);
+        i.setPackage("com.symbol.datawedge");
+        i.putExtra(DW_SET_CONFIG,config);
+        sendBroadcast(i);
+    }
 
-    void setupDataWedge(){try{
-        dw(base("CREATE_IF_NOT_EXIST"));
-        Bundle assoc=base("UPDATE"),a=new Bundle();a.putString("PACKAGE_NAME",getPackageName());a.putStringArray("ACTIVITY_LIST",new String[]{"*"});assoc.putParcelableArray("APP_LIST",new Bundle[]{a});dw(assoc);
-        Bundle bar=base("UPDATE"),b=new Bundle(),bp=new Bundle();b.putString("PLUGIN_NAME","BARCODE");b.putString("RESET_CONFIG","true");bp.putString("scanner_selection","auto");bp.putString("scanner_input_enabled","true");b.putBundle("PARAM_LIST",bp);bar.putBundle("PLUGIN_CONFIG",b);dw(bar);
-        Bundle out=base("UPDATE"),o=new Bundle(),op=new Bundle();o.putString("PLUGIN_NAME","INTENT");o.putString("RESET_CONFIG","true");op.putString("intent_output_enabled","true");op.putString("intent_action",BuildConfig.DW_ACTION);op.putString("intent_category","android.intent.category.DEFAULT");op.putInt("intent_delivery",2);o.putBundle("PARAM_LIST",op);out.putBundle("PLUGIN_CONFIG",o);dw(out);
-        Bundle key=base("UPDATE"),k=new Bundle(),kp=new Bundle();k.putString("PLUGIN_NAME","KEYSTROKE");k.putString("RESET_CONFIG","true");kp.putString("keystroke_output_enabled","true");k.putBundle("PARAM_LIST",kp);key.putBundle("PLUGIN_CONFIG",k);dw(key);
-    }catch(Exception e){Toast.makeText(this,"DataWedge setup error: "+e.getMessage(),Toast.LENGTH_LONG).show();}}
+    void setupDataWedge(){
+        try{
+            // Same DataWedge setup used by the working Case Scanner app.
+            Bundle base=new Bundle();
+            base.putString("PROFILE_NAME",PROFILE);
+            base.putString("PROFILE_ENABLED","true");
+            base.putString("CONFIG_MODE","CREATE_IF_NOT_EXIST");
+            Bundle app=new Bundle();
+            app.putString("PACKAGE_NAME",getPackageName());
+            app.putStringArray("ACTIVITY_LIST",new String[]{"*"});
+            base.putParcelableArray("APP_LIST",new Bundle[]{app});
+            sendDW(base);
+
+            Bundle barcode=new Bundle();
+            barcode.putString("PROFILE_NAME",PROFILE);
+            barcode.putString("PROFILE_ENABLED","true");
+            barcode.putString("CONFIG_MODE","UPDATE");
+            Bundle bcPlugin=new Bundle();
+            bcPlugin.putString("PLUGIN_NAME","BARCODE");
+            bcPlugin.putString("RESET_CONFIG","true");
+            Bundle bcParams=new Bundle();
+            bcParams.putString("scanner_selection","auto");
+            bcParams.putString("scanner_input_enabled","true");
+            bcPlugin.putBundle("PARAM_LIST",bcParams);
+            barcode.putBundle("PLUGIN_CONFIG",bcPlugin);
+            sendDW(barcode);
+
+            Bundle intentCfg=new Bundle();
+            intentCfg.putString("PROFILE_NAME",PROFILE);
+            intentCfg.putString("PROFILE_ENABLED","true");
+            intentCfg.putString("CONFIG_MODE","UPDATE");
+            Bundle intPlugin=new Bundle();
+            intPlugin.putString("PLUGIN_NAME","INTENT");
+            intPlugin.putString("RESET_CONFIG","true");
+            Bundle intParams=new Bundle();
+            intParams.putString("intent_output_enabled","true");
+            intParams.putString("intent_action",BuildConfig.DW_ACTION);
+            intParams.putString("intent_category",Intent.CATEGORY_DEFAULT);
+            intParams.putString("intent_delivery","2");
+            intPlugin.putBundle("PARAM_LIST",intParams);
+            intentCfg.putBundle("PLUGIN_CONFIG",intPlugin);
+            sendDW(intentCfg);
+
+            Bundle keyCfg=new Bundle();
+            keyCfg.putString("PROFILE_NAME",PROFILE);
+            keyCfg.putString("PROFILE_ENABLED","true");
+            keyCfg.putString("CONFIG_MODE","UPDATE");
+            Bundle keyPlugin=new Bundle();
+            keyPlugin.putString("PLUGIN_NAME","KEYSTROKE");
+            Bundle keyParams=new Bundle();
+            keyParams.putString("keystroke_output_enabled","false");
+            keyPlugin.putBundle("PARAM_LIST",keyParams);
+            keyCfg.putBundle("PLUGIN_CONFIG",keyPlugin);
+            sendDW(keyCfg);
+        }catch(Exception e){Toast.makeText(this,"DataWedge setup error: "+e.getMessage(),Toast.LENGTH_LONG).show();}
+    }
 }
