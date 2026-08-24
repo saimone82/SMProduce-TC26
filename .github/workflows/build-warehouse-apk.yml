@@ -1,4 +1,5 @@
-name: Build Warehouse APK
+name: WAREHOUSE APK — SM Produce
+
 on:
   workflow_dispatch:
   push:
@@ -8,8 +9,10 @@ on:
       - 'settings.gradle'
       - 'build.gradle'
       - '.github/workflows/build-warehouse-apk.yml'
+
 jobs:
-  build:
+  build-warehouse:
+    name: Build WAREHOUSE only
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -18,14 +21,19 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
-      - name: Install SDK
+      - name: Install Android SDK
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build Warehouse APK
+      - name: Build WAREHOUSE APK
         run: gradle :warehouseapp:assembleDebug
+      - name: Rename WAREHOUSE APK clearly
+        run: |
+          mkdir -p dist
+          cp warehouseapp/build/outputs/apk/debug/warehouseapp-debug.apk dist/SMProduce-WAREHOUSE.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: SMProduceWarehouse-APK
-          path: warehouseapp/build/outputs/apk/debug/warehouseapp-debug.apk
+          name: WAREHOUSE-APK-ONLY
+          path: dist/SMProduce-WAREHOUSE.apk
+          if-no-files-found: error
