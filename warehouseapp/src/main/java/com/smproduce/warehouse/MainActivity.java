@@ -26,7 +26,6 @@ public class MainActivity extends Activity {
     long lastKeyAt=0,lastScanAt=0;
     String lastScan="";
 
-    // A scan is never discarded just because the WebView callback is not ready yet.
     String pendingScan="";
     int pendingAttempts=0;
     final Handler scanHandler=new Handler(Looper.getMainLooper());
@@ -54,6 +53,7 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onResume(){super.onResume();setupDataWedge();updateNetStatus();if(isOnline())syncOfflineQueue();}
+
     @Override protected void onDestroy(){
         scanHandler.removeCallbacksAndMessages(null);
         try{unregisterReceiver(rx);}catch(Exception ignored){}
@@ -86,42 +86,47 @@ public class MainActivity extends Activity {
         FrameLayout body=new FrameLayout(this);
         home=new LinearLayout(this);home.setOrientation(LinearLayout.VERTICAL);home.setGravity(Gravity.CENTER);home.setPadding(28,28,28,28);
         TextView brand=new TextView(this);brand.setText("SM PRODUCE");brand.setTextColor(Color.WHITE);brand.setTextSize(28);brand.setTypeface(null,1);brand.setGravity(Gravity.CENTER);home.addView(brand);
-        TextView sub=new TextView(this);sub.setText("WAREHOUSE\nPALLETIZATION & SHIPPING");sub.setTextColor(Color.rgb(143,169,193));sub.setTextSize(17);sub.setGravity(Gravity.CENTER);home.addView(sub);
+        TextView sub=new TextView(this);sub.setText("WAREHOUSE");sub.setTextColor(Color.rgb(143,169,193));sub.setTextSize(17);sub.setGravity(Gravity.CENTER);home.addView(sub);
 
-        Button p=bigButton("PALLETIZATION\nCreate • Scan Cases • Close Pallet",Color.rgb(25,118,210));
-        p.setOnClickListener(v->openPage("Palletization","pallet","/pages/tc26_pallet.php?token="+BuildConfig.TC26_TOKEN));
-        LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(-1,160);pp.topMargin=45;home.addView(p,pp);
+        Button p=bigButton("PALLETS",Color.rgb(25,118,210));
+        p.setOnClickListener(v->openPage("Pallets","pallet","/pages/tc26_pallet.php?token="+BuildConfig.TC26_TOKEN));
+        LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(-1,150);pp.topMargin=45;home.addView(p,pp);
 
-        Button s=bigButton("SHIPPING\nScan Pallets • PO • Close • BOL",Color.rgb(46,125,50));
+        Button s=bigButton("SHIPPING",Color.rgb(46,125,50));
         s.setOnClickListener(v->openPage("Shipping","shipping","/pages/tc26_shipping.php?token="+BuildConfig.TC26_TOKEN));
-        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,160);sp.topMargin=24;home.addView(s,sp);
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,150);sp.topMargin=24;home.addView(s,sp);
 
         TextView hint=new TextView(this);hint.setText("TC26 scanner ready\nOffline scans are saved locally and synchronized when connection returns");hint.setTextColor(Color.rgb(143,169,193));hint.setTextSize(14);hint.setGravity(Gravity.CENTER);LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(-1,-2);hp.topMargin=38;home.addView(hint,hp);
         body.addView(home,new FrameLayout.LayoutParams(-1,-1));
 
         web=new WebView(this);web.setVisibility(View.GONE);web.setBackgroundColor(Color.rgb(11,22,34));web.setFocusable(true);web.setFocusableInTouchMode(true);
-        WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setDatabaseEnabled(true);ws.setCacheMode(WebSettings.LOAD_DEFAULT);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setUserAgentString(ws.getUserAgentString()+" SMProduceWarehouse/1.3.1");
+        WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setDatabaseEnabled(true);ws.setCacheMode(WebSettings.LOAD_DEFAULT);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setUserAgentString(ws.getUserAgentString()+" SMProduceWarehouse/1.3.2");
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,true);
         web.setWebViewClient(new WebViewClient(){
             @Override public void onPageFinished(WebView v,String url){
                 super.onPageFinished(v,url);updateNetStatus();
-                // If the operator scanned while New Pallet was opening, deliver it now.
                 if(!pendingScan.isEmpty())retryPendingScan();
                 if(isOnline())syncOfflineQueue();
             }
-            @Override public void onReceivedError(WebView v,WebResourceRequest r,WebResourceError e){if(r.isForMainFrame())Toast.makeText(MainActivity.this,"OFFLINE - scans will be saved locally",Toast.LENGTH_LONG).show();}
+            @Override public void onReceivedError(WebView v,WebResourceRequest r,WebResourceError e){
+                if(r.isForMainFrame())Toast.makeText(MainActivity.this,"OFFLINE - scans will be saved locally",Toast.LENGTH_LONG).show();
+            }
         });
         body.addView(web,new FrameLayout.LayoutParams(-1,-1));root.addView(body,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
     }
 
-    Button bigButton(String text,int color){Button b=new Button(this);b.setText(text);b.setTextColor(Color.WHITE);b.setTextSize(19);b.setTypeface(null,1);b.setGravity(Gravity.CENTER);b.setBackgroundColor(color);return b;}
+    Button bigButton(String text,int color){Button b=new Button(this);b.setText(text);b.setTextColor(Color.WHITE);b.setTextSize(22);b.setTypeface(null,1);b.setGravity(Gravity.CENTER);b.setBackgroundColor(color);return b;}
 
     void openPage(String name,String mode,String path){
         currentMode=mode;inWeb=true;pendingScan="";pendingAttempts=0;
         home.setVisibility(View.GONE);web.setVisibility(View.VISIBLE);back.setVisibility(View.VISIBLE);title.setText(name.toUpperCase());web.loadUrl(BuildConfig.BASE_URL+path);web.requestFocus();
     }
 
-    void showHome(){inWeb=false;currentMode="";pendingScan="";pendingAttempts=0;scanHandler.removeCallbacksAndMessages(null);web.stopLoading();web.setVisibility(View.GONE);home.setVisibility(View.VISIBLE);back.setVisibility(View.GONE);title.setText("WAREHOUSE");}
+    void showHome(){
+        inWeb=false;currentMode="";pendingScan="";pendingAttempts=0;scanHandler.removeCallbacksAndMessages(null);
+        web.stopLoading();web.setVisibility(View.GONE);home.setVisibility(View.VISIBLE);back.setVisibility(View.GONE);title.setText("WAREHOUSE");
+    }
+
     @Override public void onBackPressed(){if(inWeb){if(web.canGoBack())web.goBack();else showHome();}else super.onBackPressed();}
 
     void acceptScan(String code,String source){
@@ -134,7 +139,7 @@ public class MainActivity extends Activity {
     }
 
     void deliverScan(String code){
-        if(!inWeb||currentMode.isEmpty()){Toast.makeText(this,"Open Palletization or Shipping",Toast.LENGTH_SHORT).show();return;}
+        if(!inWeb||currentMode.isEmpty()){Toast.makeText(this,"Open Pallets or Shipping",Toast.LENGTH_SHORT).show();return;}
         if(!isOnline()){queueWithContext(code);return;}
         pendingScan=code;pendingAttempts=0;tryDeliverPending();
     }
@@ -145,17 +150,12 @@ public class MainActivity extends Activity {
         if(pendingScan.isEmpty()||!inWeb)return;
         final String code=pendingScan;
         final String q=JSONObject.quote(code);
-
-        // Primary path: the TC26 web pages expose onDataWedgeScan().
-        // Fallback path: dispatch a warehouseScan event so a page can listen without
-        // depending on a global function. A scan is retried while the page is loading.
         String js="(function(){try{"+
                 "if(typeof window.onDataWedgeScan==='function'){window.onDataWedgeScan("+q+",'tc26');return 'OK_CALLBACK';}"+
                 "var ev=new CustomEvent('warehouseScan',{detail:{code:"+q+",source:'tc26'}});document.dispatchEvent(ev);window.dispatchEvent(ev);"+
                 "var a=document.activeElement;if(a&&((a.tagName==='INPUT')||(a.tagName==='TEXTAREA'))){a.value="+q+";a.dispatchEvent(new Event('input',{bubbles:true}));a.dispatchEvent(new Event('change',{bubbles:true}));a.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));return 'OK_INPUT';}"+
                 "return document.readyState==='complete'?'NO_CALLBACK':'LOADING';"+
                 "}catch(e){return 'ERR:'+String(e);}})()";
-
         web.evaluateJavascript(js,res->{
             String r=cleanJs(res);
             if(r.startsWith("OK_")){
@@ -164,11 +164,7 @@ public class MainActivity extends Activity {
                 return;
             }
             pendingAttempts++;
-            if(pendingAttempts<=20){
-                scanHandler.postDelayed(this::tryDeliverPending,250);
-            }else{
-                // Do not silently lose the barcode. If the page still has no callback,
-                // save it with the active pallet/shipment context when possible.
+            if(pendingAttempts<=20){scanHandler.postDelayed(this::tryDeliverPending,250);}else{
                 String save=pendingScan;pendingScan="";pendingAttempts=0;
                 if(!save.isEmpty()){
                     Toast.makeText(this,"Scanner page not ready - saving scan",Toast.LENGTH_LONG).show();
@@ -208,8 +204,35 @@ public class MainActivity extends Activity {
 
     String jsEncode(String s){try{return java.net.URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
 
-    boolean isOnline(){try{ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();if(n==null)return false;NetworkCapabilities c=cm.getNetworkCapabilities(n);return c!=null&&c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)&&c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);}catch(Exception e){return false;}}
-    void updateNetStatus(){if(status==null)return;int q=queueCount();if(isOnline()){status.setText(q>0?"ONLINE • "+q+" pending":"ONLINE");status.setTextColor(Color.rgb(100,220,120));}else{status.setText(q>0?"OFFLINE • "+q+" saved":"OFFLINE");status.setTextColor(Color.rgb(255,170,70));}}
+    boolean isOnline(){
+        try{
+            ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+            if(Build.VERSION.SDK_INT>=23){
+                Network n=cm.getActiveNetwork();
+                if(n==null)return false;
+                NetworkCapabilities c=cm.getNetworkCapabilities(n);
+                if(c==null)return false;
+                return c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                       c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                       c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                       c.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET);
+            }
+            NetworkInfo ni=cm.getActiveNetworkInfo();
+            return ni!=null&&ni.isConnected();
+        }catch(Exception e){return false;}
+    }
+
+    void updateNetStatus(){
+        if(status==null)return;
+        int q=queueCount();
+        if(isOnline()){
+            status.setText(q>0?"ONLINE • "+q+" pending":"ONLINE");
+            status.setTextColor(Color.rgb(100,220,120));
+        }else{
+            status.setText(q>0?"OFFLINE • "+q+" saved":"OFFLINE");
+            status.setTextColor(Color.rgb(255,170,70));
+        }
+    }
 
     void dw(Bundle cfg){Intent i=new Intent("com.symbol.datawedge.api.ACTION");i.setPackage("com.symbol.datawedge");i.putExtra("com.symbol.datawedge.api.SET_CONFIG",cfg);sendBroadcast(i);}
     Bundle base(String mode){Bundle p=new Bundle();p.putString("PROFILE_NAME",PROFILE);p.putString("PROFILE_ENABLED","true");p.putString("CONFIG_MODE",mode);return p;}
@@ -219,8 +242,6 @@ public class MainActivity extends Activity {
         Bundle assoc=base("UPDATE"),a=new Bundle();a.putString("PACKAGE_NAME",getPackageName());a.putStringArray("ACTIVITY_LIST",new String[]{"*"});assoc.putParcelableArray("APP_LIST",new Bundle[]{a});dw(assoc);
         Bundle bar=base("UPDATE"),b=new Bundle(),bp=new Bundle();b.putString("PLUGIN_NAME","BARCODE");b.putString("RESET_CONFIG","true");bp.putString("scanner_selection","auto");bp.putString("scanner_input_enabled","true");b.putBundle("PARAM_LIST",bp);bar.putBundle("PLUGIN_CONFIG",b);dw(bar);
         Bundle out=base("UPDATE"),o=new Bundle(),op=new Bundle();o.putString("PLUGIN_NAME","INTENT");o.putString("RESET_CONFIG","true");op.putString("intent_output_enabled","true");op.putString("intent_action",BuildConfig.DW_ACTION);op.putString("intent_category","android.intent.category.DEFAULT");op.putInt("intent_delivery",2);o.putBundle("PARAM_LIST",op);out.putBundle("PLUGIN_CONFIG",o);dw(out);
-        // Keep keystroke disabled for the Warehouse profile. Intent output is the
-        // authoritative scanner channel and avoids duplicate/partial scans in WebView.
         Bundle key=base("UPDATE"),k=new Bundle(),kp=new Bundle();k.putString("PLUGIN_NAME","KEYSTROKE");k.putString("RESET_CONFIG","true");kp.putString("keystroke_output_enabled","false");k.putBundle("PARAM_LIST",kp);key.putBundle("PLUGIN_CONFIG",k);dw(key);
     }catch(Exception e){Toast.makeText(this,"DataWedge setup error: "+e.getMessage(),Toast.LENGTH_LONG).show();}}
 }
