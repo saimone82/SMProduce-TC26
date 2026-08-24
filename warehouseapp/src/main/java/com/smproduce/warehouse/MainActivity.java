@@ -100,7 +100,7 @@ public class MainActivity extends Activity {
         body.addView(home,new FrameLayout.LayoutParams(-1,-1));
 
         web=new WebView(this);web.setVisibility(View.GONE);web.setBackgroundColor(Color.rgb(11,22,34));web.setFocusable(true);web.setFocusableInTouchMode(true);
-        WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setDatabaseEnabled(true);ws.setCacheMode(WebSettings.LOAD_DEFAULT);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setUserAgentString(ws.getUserAgentString()+" SMProduceWarehouse/1.3.2");
+        WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setDatabaseEnabled(true);ws.setCacheMode(WebSettings.LOAD_DEFAULT);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setUserAgentString(ws.getUserAgentString()+" SMProduceWarehouse/1.3.5");
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,true);
         web.setWebViewClient(new WebViewClient(){
             @Override public void onPageFinished(WebView v,String url){
@@ -141,7 +141,38 @@ public class MainActivity extends Activity {
     void deliverScan(String code){
         if(!inWeb||currentMode.isEmpty()){Toast.makeText(this,"Open Pallets or Shipping",Toast.LENGTH_SHORT).show();return;}
         if(!isOnline()){queueWithContext(code);return;}
-        pendingScan=code;pendingAttempts=0;tryDeliverPending();
+        submitOnlineScan(code);
+    }
+
+    String activeIdJavascript(){
+        if("pallet".equals(currentMode)){
+            return "(function(){var e=document.getElementById('palletId')||document.getElementById('pallet_id')||document.querySelector('[name=\\\"pallet_id\\\"]');if(e&&e.value)return String(e.value);if(typeof _pid!=='undefined'&&_pid)return String(_pid);if(typeof palletId!=='undefined'&&palletId)return String(palletId);return '';})()";
+        }
+        return "(function(){var e=document.getElementById('shipmentId')||document.getElementById('shipment_id')||document.querySelector('[name=\\\"shipment_id\\\"]');if(e&&e.value)return String(e.value);if(typeof _sid!=='undefined'&&_sid)return String(_sid);if(typeof shipmentId!=='undefined'&&shipmentId)return String(shipmentId);return '';})()";
+    }
+
+    void submitOnlineScan(String code){
+        web.evaluateJavascript(activeIdJavascript(),val->{
+            String id=cleanJs(val);
+            if(id.isEmpty()){
+                pendingScan=code;pendingAttempts=0;tryDeliverPending();
+                return;
+            }
+            final String endpoint="pallet".equals(currentMode)?"/pages/api/tc26_pallet_api.php":"/pages/api/tc26_shipping_api.php";
+            final String body="pallet".equals(currentMode)
+                    ? "action=scan&pallet_id="+jsEncode(id)+"&case_serial="+jsEncode(code)+"&token="+jsEncode(BuildConfig.TC26_TOKEN)
+                    : "action=scan&shipment_id="+jsEncode(id)+"&pallet_id="+jsEncode(code)+"&token="+jsEncode(BuildConfig.TC26_TOKEN);
+            String js="(async function(){try{const p=new URLSearchParams('"+body+"');const r=await fetch('"+endpoint+"',{method:'POST',body:p,credentials:'include'});const t=await r.text();try{const j=JSON.parse(t);return j.ok?'OK:'+String(j.message||j.msg||'Added'):'ERR:'+String(j.error||j.err||j.message||'server');}catch(e){return 'ERR:JSON '+t.substring(0,100);}}catch(e){return 'ERR:'+String(e);}})()";
+            web.evaluateJavascript(js,res->{
+                String rr=cleanJs(res);
+                if(rr.startsWith("OK:")){
+                    Toast.makeText(this,"ADDED: "+code,Toast.LENGTH_SHORT).show();
+                    web.reload();
+                }else{
+                    Toast.makeText(this,"SCAN ERROR: "+rr,Toast.LENGTH_LONG).show();
+                }
+            });
+        });
     }
 
     void retryPendingScan(){if(pendingScan.isEmpty())return;scanHandler.removeCallbacksAndMessages(null);scanHandler.postDelayed(this::tryDeliverPending,150);}
@@ -152,9 +183,11 @@ public class MainActivity extends Activity {
         final String q=JSONObject.quote(code);
         String js="(function(){try{"+
                 "if(typeof window.onDataWedgeScan==='function'){window.onDataWedgeScan("+q+",'tc26');return 'OK_CALLBACK';}"+
-                "var ev=new CustomEvent('warehouseScan',{detail:{code:"+q+",source:'tc26'}});document.dispatchEvent(ev);window.dispatchEvent(ev);"+
-                "var a=document.activeElement;if(a&&((a.tagName==='INPUT')||(a.tagName==='TEXTAREA'))){a.value="+q+";a.dispatchEvent(new Event('input',{bubbles:true}));a.dispatchEvent(new Event('change',{bubbles:true}));a.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));return 'OK_INPUT';}"+
-                "return document.readyState==='complete'?'NO_CALLBACK':'LOADING';"+
+                "var fns=['scanCase','handleScan','processScan','addCase'];for(var i=0;i<fns.length;i++){if(typeof window[fns[i]]==='function'){window[fns[i]]("+q+");return 'OK_FN:'+fns[i];}}"+
+                "var sel=['#caseSerial','#case_serial','#scanInput','#barcode','[name=\\\"case_serial\\\"]','[name=\\\"serial\\\"]','[name=\\\"barcode\\\"]'];var a=null;for(var x=0;x<sel.length&&!a;x++)a=document.querySelector(sel[x]);"+
+                "if(!a){var all=document.querySelectorAll('input[type=\\\"text\\\"],input:not([type])');for(var y=0;y<all.length;y++){var z=((all[y].id||'')+' '+(all[y].name||'')+' '+(all[y].placeholder||'')).toLowerCase();if(z.indexOf('scan')>=0||z.indexOf('barcode')>=0||z.indexOf('serial')>=0||z.indexOf('case')>=0){a=all[y];break;}}}"+
+                "if(a){a.focus();a.value="+q+";a.dispatchEvent(new Event('input',{bubbles:true}));a.dispatchEvent(new Event('change',{bubbles:true}));a.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));a.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));if(a.form&&typeof a.form.requestSubmit==='function')a.form.requestSubmit();return 'OK_INPUT';}"+
+                "return document.readyState==='complete'?'NO_HANDLER':'LOADING';"+
                 "}catch(e){return 'ERR:'+String(e);}})()";
         web.evaluateJavascript(js,res->{
             String r=cleanJs(res);
@@ -167,7 +200,7 @@ public class MainActivity extends Activity {
             if(pendingAttempts<=20){scanHandler.postDelayed(this::tryDeliverPending,250);}else{
                 String save=pendingScan;pendingScan="";pendingAttempts=0;
                 if(!save.isEmpty()){
-                    Toast.makeText(this,"Scanner page not ready - saving scan",Toast.LENGTH_LONG).show();
+                    Toast.makeText(this,"No scanner handler on page - saving scan",Toast.LENGTH_LONG).show();
                     queueWithContext(save);
                 }
             }
@@ -175,8 +208,7 @@ public class MainActivity extends Activity {
     }
 
     void queueWithContext(String code){
-        String js="pallet".equals(currentMode)?"(document.getElementById('palletId')?document.getElementById('palletId').value:'')":"(typeof _sid!=='undefined'?_sid:'')";
-        web.evaluateJavascript(js,val->{
+        web.evaluateJavascript(activeIdJavascript(),val->{
             String id=cleanJs(val);
             if(id.isEmpty()){Toast.makeText(this,"No active "+currentMode+" ID - scan not saved",Toast.LENGTH_LONG).show();return;}
             enqueue(currentMode,id,code);Toast.makeText(this,"SAVED: "+code+" ("+queueCount()+" pending)",Toast.LENGTH_LONG).show();updateNetStatus();
@@ -196,9 +228,9 @@ public class MainActivity extends Activity {
         if(idx>=a.length()){getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(QKEY,"[]").apply();Toast.makeText(this,"Offline scans synchronized",Toast.LENGTH_LONG).show();updateNetStatus();return;}
         try{
             JSONObject o=a.getJSONObject(idx);String type=o.getString("type"),id=o.getString("id"),code=o.getString("code");String endpoint,body;
-            if("pallet".equals(type)){endpoint="/pages/api/tc26_pallet_api.php";body="action=scan&pallet_id="+jsEncode(id)+"&case_serial="+jsEncode(code);}else{endpoint="/pages/api/tc26_shipping_api.php";body="action=scan&shipment_id="+jsEncode(id)+"&pallet_id="+jsEncode(code);}
-            String js="(async function(){try{const p=new URLSearchParams('"+body+"');const r=await fetch('"+endpoint+"',{method:'POST',body:p,credentials:'include'});const t=await r.text();try{const j=JSON.parse(t);return j.ok?'OK':'ERR:'+String(j.err||'server');}catch(e){return 'ERR:json';}}catch(e){return 'ERR:network';}})()";
-            web.evaluateJavascript(js,res->{String rr=cleanJs(res);if("OK".equals(rr)){JSONArray n=new JSONArray();for(int x=idx+1;x<a.length();x++)try{n.put(a.getJSONObject(x));}catch(Exception ignored){}getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(QKEY,n.toString()).apply();updateNetStatus();syncOfflineQueue();}else Toast.makeText(this,"Sync paused: "+rr,Toast.LENGTH_LONG).show();});
+            if("pallet".equals(type)){endpoint="/pages/api/tc26_pallet_api.php";body="action=scan&pallet_id="+jsEncode(id)+"&case_serial="+jsEncode(code)+"&token="+jsEncode(BuildConfig.TC26_TOKEN);}else{endpoint="/pages/api/tc26_shipping_api.php";body="action=scan&shipment_id="+jsEncode(id)+"&pallet_id="+jsEncode(code)+"&token="+jsEncode(BuildConfig.TC26_TOKEN);}
+            String js="(async function(){try{const p=new URLSearchParams('"+body+"');const r=await fetch('"+endpoint+"',{method:'POST',body:p,credentials:'include'});const t=await r.text();try{const j=JSON.parse(t);return j.ok?'OK':'ERR:'+String(j.error||j.err||j.message||'server');}catch(e){return 'ERR:json';}}catch(e){return 'ERR:network';}})()";
+            web.evaluateJavascript(js,res->{String rr=cleanJs(res);if("OK".equals(rr)){JSONArray n=new JSONArray();for(int x=idx+1;x<a.length();x++)try{n.put(a.getJSONObject(x));}catch(Exception ignored){}getSharedPreferences(PREFS,MODE_PRIVATE).edit().putString(QKEY,n.toString()).apply();updateNetStatus();syncOfflineQueue();web.reload();}else Toast.makeText(this,"Sync paused: "+rr,Toast.LENGTH_LONG).show();});
         }catch(Exception ignored){}
     }
 
