@@ -29,6 +29,12 @@ public class MainActivity extends Activity {
     String pendingScan="";
     int pendingAttempts=0;
     final Handler scanHandler=new Handler(Looper.getMainLooper());
+    final Handler keyHandler=new Handler(Looper.getMainLooper());
+    final Runnable flushKeyBuffer=()->{
+        String s=keyBuf.toString().trim();
+        keyBuf.setLength(0);
+        if(s.length()>=4) acceptScan(s,"keystroke");
+    };
 
     final BroadcastReceiver rx=new BroadcastReceiver(){
         @Override public void onReceive(Context c,Intent i){
@@ -56,6 +62,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onDestroy(){
         scanHandler.removeCallbacksAndMessages(null);
+        keyHandler.removeCallbacksAndMessages(null);
         try{unregisterReceiver(rx);}catch(Exception ignored){}
         try{unregisterReceiver(netRx);}catch(Exception ignored){}
         if(web!=null)web.destroy();
@@ -67,11 +74,17 @@ public class MainActivity extends Activity {
         int k=e.getKeyCode();long now=System.currentTimeMillis();
         if(now-lastKeyAt>500)keyBuf.setLength(0);lastKeyAt=now;
         if(k==KeyEvent.KEYCODE_ENTER||k==KeyEvent.KEYCODE_NUMPAD_ENTER){
+            keyHandler.removeCallbacks(flushKeyBuffer);
             String s=keyBuf.toString().trim();keyBuf.setLength(0);
             if(!s.isEmpty()){acceptScan(s,"keystroke");return true;}
         }
         int u=e.getUnicodeChar();
-        if(u>=32&&u<=126){keyBuf.append((char)u);return true;}
+        if(u>=32&&u<=126){
+            keyBuf.append((char)u);
+            keyHandler.removeCallbacks(flushKeyBuffer);
+            keyHandler.postDelayed(flushKeyBuffer,140);
+            return true;
+        }
         return super.dispatchKeyEvent(e);
     }
 
@@ -100,7 +113,7 @@ public class MainActivity extends Activity {
         body.addView(home,new FrameLayout.LayoutParams(-1,-1));
 
         web=new WebView(this);web.setVisibility(View.GONE);web.setBackgroundColor(Color.rgb(11,22,34));web.setFocusable(true);web.setFocusableInTouchMode(true);
-        WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setDatabaseEnabled(true);ws.setCacheMode(WebSettings.LOAD_DEFAULT);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setUserAgentString(ws.getUserAgentString()+" SMProduceWarehouse/1.3.5");
+        WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setDatabaseEnabled(true);ws.setCacheMode(WebSettings.LOAD_DEFAULT);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setUserAgentString(ws.getUserAgentString()+" SMProduceWarehouse/1.3.6");
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,true);
         web.setWebViewClient(new WebViewClient(){
             @Override public void onPageFinished(WebView v,String url){
@@ -134,7 +147,7 @@ public class MainActivity extends Activity {
         long now=System.currentTimeMillis();
         if(code.equals(lastScan)&&now-lastScanAt<800)return;
         lastScan=code;lastScanAt=now;
-        Toast.makeText(this,"SCAN: "+code,Toast.LENGTH_SHORT).show();
+        Toast.makeText(this,"SCAN ["+source+"]: "+code,Toast.LENGTH_SHORT).show();
         deliverScan(code);
     }
 
@@ -274,6 +287,6 @@ public class MainActivity extends Activity {
         Bundle assoc=base("UPDATE"),a=new Bundle();a.putString("PACKAGE_NAME",getPackageName());a.putStringArray("ACTIVITY_LIST",new String[]{"*"});assoc.putParcelableArray("APP_LIST",new Bundle[]{a});dw(assoc);
         Bundle bar=base("UPDATE"),b=new Bundle(),bp=new Bundle();b.putString("PLUGIN_NAME","BARCODE");b.putString("RESET_CONFIG","true");bp.putString("scanner_selection","auto");bp.putString("scanner_input_enabled","true");b.putBundle("PARAM_LIST",bp);bar.putBundle("PLUGIN_CONFIG",b);dw(bar);
         Bundle out=base("UPDATE"),o=new Bundle(),op=new Bundle();o.putString("PLUGIN_NAME","INTENT");o.putString("RESET_CONFIG","true");op.putString("intent_output_enabled","true");op.putString("intent_action",BuildConfig.DW_ACTION);op.putString("intent_category","android.intent.category.DEFAULT");op.putInt("intent_delivery",2);o.putBundle("PARAM_LIST",op);out.putBundle("PLUGIN_CONFIG",o);dw(out);
-        Bundle key=base("UPDATE"),k=new Bundle(),kp=new Bundle();k.putString("PLUGIN_NAME","KEYSTROKE");k.putString("RESET_CONFIG","true");kp.putString("keystroke_output_enabled","false");k.putBundle("PARAM_LIST",kp);key.putBundle("PLUGIN_CONFIG",k);dw(key);
+        Bundle key=base("UPDATE"),k=new Bundle(),kp=new Bundle();k.putString("PLUGIN_NAME","KEYSTROKE");k.putString("RESET_CONFIG","true");kp.putString("keystroke_output_enabled","true");k.putBundle("PARAM_LIST",kp);key.putBundle("PLUGIN_CONFIG",k);dw(key);
     }catch(Exception e){Toast.makeText(this,"DataWedge setup error: "+e.getMessage(),Toast.LENGTH_LONG).show();}}
 }
