@@ -216,7 +216,7 @@ include '../includes/header.php';
 .order-head{padding:22px 24px;border-bottom:1px solid #e7edf2;background:#fff}.order-body{padding:24px}.panel{border:1px solid #e5eaf0;border-radius:16px;background:linear-gradient(180deg,#fff 0%,#f8fbfd 100%);padding:18px;height:100%}
 .panel-title{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:800;margin-bottom:14px}.readonly-pill{display:inline-flex;align-items:center;padding:8px 12px;border-radius:999px;background:#f1f5f9;color:#334155;font-size:.85rem;font-weight:700}
 .line-table th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:#475569}.sku-search{font-size:.9rem}
-.sku-search-wrap{position:relative}.sku-suggestions{max-height:280px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:.5rem;box-shadow:0 8px 18px rgba(15,23,42,.10);display:none}.sku-suggestions.show{display:block}.sku-suggestion{display:block;width:100%;border:0;border-bottom:1px solid #eef2f7;background:#fff;padding:10px 12px;text-align:left;font-size:.88rem;color:#17212b}.sku-suggestion:last-child{border-bottom:0}.sku-suggestion:hover,.sku-suggestion.active{background:#eff6ff;color:#1d4ed8}.sku-suggestion-empty{padding:10px 12px;color:#64748b;font-size:.86rem}.sku-selected{font-size:.82rem;color:#166534;font-weight:700;display:none}.sku-selected.show{display:block}.sku-select{display:none!important}
+.sku-search-wrap{position:relative}.sku-suggestions{max-height:320px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:.5rem;box-shadow:0 8px 18px rgba(15,23,42,.10);display:none}.sku-suggestions.show{display:block}.sku-results-count{position:sticky;top:0;z-index:1;padding:7px 12px;background:#f8fafc;border-bottom:1px solid #dbe3ec;color:#475569;font-size:.78rem;font-weight:700}.sku-suggestion{display:block;width:100%;border:0;border-bottom:1px solid #eef2f7;background:#fff;padding:10px 12px;text-align:left;font-size:.88rem;color:#17212b}.sku-suggestion:last-child{border-bottom:0}.sku-suggestion:hover,.sku-suggestion.active{background:#eff6ff;color:#1d4ed8}.sku-suggestion-empty{padding:10px 12px;color:#64748b;font-size:.86rem}.sku-selected{font-size:.82rem;color:#166534;font-weight:700;display:none}.sku-selected.show{display:block}.sku-select{display:none!important}
 </style>
 <div class="container-fluid py-4 px-3 px-xl-4">
     <div class="order-shell">
@@ -356,6 +356,10 @@ include '../includes/header.php';
                                         ?>
                                         <option value="<?= (int)$sku['sku_id'] ?>"
                                                 data-search="<?= orders_h(implode(' ', [(string)$sku['sku_id'], (string)($sku['variety'] ?? ''), (string)($sku['packaging'] ?? ''), (string)($sku['size'] ?? '')])) ?>"
+                                                data-sku="<?= orders_h((string)$sku['sku_id']) ?>"
+                                                data-variety="<?= orders_h((string)($sku['variety'] ?? '')) ?>"
+                                                data-packaging="<?= orders_h((string)($sku['packaging'] ?? '')) ?>"
+                                                data-size="<?= orders_h((string)($sku['size'] ?? '')) ?>"
                                                 <?= (string)$row['sku_id'] === (string)$sku['sku_id'] ? 'selected' : '' ?>><?= orders_h('SKU ' . $sku['sku_id'] . ' — ' . $skuDesc) ?></option>
                                                     <?php endforeach; ?>
                                                 </select>
@@ -628,10 +632,15 @@ document.addEventListener('DOMContentLoaded', function(){
             const originalOptions = Array.from(select.options).map(opt => ({
                 value: opt.value,
                 text: opt.textContent.trim(),
-                search: (opt.dataset.search || opt.textContent).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                search: normalize(opt.dataset.search || opt.textContent),
+                fields: [opt.dataset.sku, opt.dataset.variety, opt.dataset.packaging, opt.dataset.size].map(normalize)
             }));
             let matches = [];
             let activeIndex = -1;
+
+            function normalize(value){
+                return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+            }
 
             function choose(opt){
                 select.value = opt.value;
@@ -645,10 +654,7 @@ document.addEventListener('DOMContentLoaded', function(){
             }
 
             function renderSuggestions(){
-                const terms = searchInput.value
-                    .trim()
-                    .toLowerCase()
-                    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                const terms = normalize(searchInput.value)
                     .split(/\s+/)
                     .filter(Boolean);
                 if(!terms.length){
@@ -660,13 +666,19 @@ document.addEventListener('DOMContentLoaded', function(){
                 if(selectedBox) selectedBox.classList.remove('show');
                 select.value = '';
                 matches = originalOptions
-                    .filter(opt => opt.value !== '' && terms.every(term => opt.search.includes(term)))
-                    .sort(function(a,b){
-                        if(!terms.length) return a.text.localeCompare(b.text, undefined, {numeric:true});
-                        const aStarts = terms.reduce((n,t) => n + (a.search.startsWith(t) ? 1 : 0), 0);
-                        const bStarts = terms.reduce((n,t) => n + (b.search.startsWith(t) ? 1 : 0), 0);
-                        return bStarts - aStarts || a.text.localeCompare(b.text, undefined, {numeric:true});
+                    .filter(opt => opt.value !== '' && terms.every(term => opt.fields.some(field => field.includes(term))))
+                    .map(function(opt){
+                        let score = 0;
+                        terms.forEach(function(term){
+                            opt.fields.forEach(function(field, index){
+                                if(field === term) score += index === 0 ? 300 : 100;
+                                else if(field.startsWith(term)) score += index === 0 ? 150 : 50;
+                                else if(field.includes(term)) score += 20;
+                            });
+                        });
+                        return Object.assign({}, opt, {score:score});
                     })
+                    .sort((a,b) => b.score - a.score || a.text.localeCompare(b.text, undefined, {numeric:true}))
                     .slice(0, 50);
                 activeIndex = -1;
                 suggestionBox.innerHTML = '';
@@ -676,6 +688,10 @@ document.addEventListener('DOMContentLoaded', function(){
                     empty.textContent = 'No matching product found';
                     suggestionBox.appendChild(empty);
                 } else {
+                    const count = document.createElement('div');
+                    count.className = 'sku-results-count';
+                    count.textContent = matches.length + (matches.length === 1 ? ' product found' : ' products found');
+                    suggestionBox.appendChild(count);
                     matches.forEach(function(opt){
                         const button = document.createElement('button');
                         button.type = 'button';
@@ -718,7 +734,7 @@ document.addEventListener('DOMContentLoaded', function(){
                 }
             });
             const initiallySelected = originalOptions.find(opt => opt.value === select.value);
-            if(initiallySelected){
+            if(initiallySelected && initiallySelected.value !== ''){
                 searchInput.value = initiallySelected.text;
                 if(selectedBox){ selectedBox.textContent = 'Selected: ' + initiallySelected.text; selectedBox.classList.add('show'); }
             }
