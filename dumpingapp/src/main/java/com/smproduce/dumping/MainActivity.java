@@ -151,8 +151,18 @@ public class MainActivity extends Activity {
         scan.setOnEditorActionListener((v,id,event) -> { if(id==EditorInfo.IME_ACTION_DONE || (event!=null&&event.getKeyCode()==KeyEvent.KEYCODE_ENTER)){ submit(); return true;} return false; });
         root.addView(scan, new LinearLayout.LayoutParams(-1,90));
         Button dump = new Button(this); dump.setText(spanish?"ESCANEAR / VOLCAR":"SCAN / DUMP"); dump.setTextSize(19); dump.setOnClickListener(v -> submit()); root.addView(dump,new LinearLayout.LayoutParams(-1,80));
-        status = text("",20,Color.DKGRAY); status.setGravity(Gravity.CENTER); status.setTypeface(null,Typeface.BOLD); root.addView(status,new LinearLayout.LayoutParams(-1,90));
-        total = text("",18,Color.rgb(21,128,61)); total.setGravity(Gravity.CENTER); root.addView(total);
+        status = text("",20,Color.DKGRAY);
+        status.setGravity(Gravity.CENTER);
+        status.setTypeface(null,Typeface.BOLD);
+        status.setMinHeight(160);
+        status.setPadding(18,22,18,22);
+        root.addView(status,new LinearLayout.LayoutParams(-1,-2));
+        total = text("",18,Color.rgb(21,128,61));
+        total.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams totalParams=new LinearLayout.LayoutParams(-1,-2);
+        totalParams.topMargin=18;
+        totalParams.bottomMargin=24;
+        root.addView(total,totalParams);
         TextView h = text("",19,Color.rgb(17,24,39)); h.setId(1001); h.setTypeface(null,Typeface.BOLD); root.addView(h);
         history = new LinearLayout(this); history.setOrientation(LinearLayout.VERTICAL); root.addView(history);
         refreshLabels();
@@ -192,6 +202,7 @@ public class MainActivity extends Activity {
 
     private void result(boolean ok,String barcode,String message,JSONObject data){
         scan.setEnabled(true); scan.setText("");
+        status.setTextSize(ok ? 20 : 17);
         if(ok){
             dumpedCount++; tone.startTone(ToneGenerator.TONE_PROP_ACK,180); status.setText("✓ "+barcode+"  "+(spanish?"VOLCADO":"DUMPED")); status.setTextColor(Color.rgb(21,128,61));
             String detail=barcode;
