@@ -1,0 +1,38 @@
+name: BIN RECEIVING APK — SM Produce
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ bin-receiving-app ]
+    paths:
+      - 'binreceivingapp/**'
+      - 'settings.gradle'
+      - '.github/workflows/build-bin-receiving-apk.yml'
+
+jobs:
+  build-bin-receiving:
+    name: Build BIN RECEIVING only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build BIN RECEIVING APK
+        run: gradle :binreceivingapp:assembleDebug
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          cp binreceivingapp/build/outputs/apk/debug/binreceivingapp-debug.apk dist/SMProduce-BIN-RECEIVING.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BIN-RECEIVING-APK
+          path: dist/SMProduce-BIN-RECEIVING.apk
+          if-no-files-found: error
