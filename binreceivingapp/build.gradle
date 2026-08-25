@@ -7,8 +7,8 @@ android {
         applicationId 'com.smproduce.binreceiving'
         minSdk 26
         targetSdk 35
-        versionCode 4
-        versionName '1.1.0'
+        versionCode 5
+        versionName '1.1.1'
         buildConfigField 'String', 'BASE_URL', '"https://smproduceprod.uk"'
         buildConfigField 'String', 'APP_TOKEN', '"SMTC26_SECURE_2026"'
     }
