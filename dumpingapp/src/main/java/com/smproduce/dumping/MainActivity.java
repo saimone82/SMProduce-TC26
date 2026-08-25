@@ -21,7 +21,7 @@ public class MainActivity extends Activity {
     private EditText scan;
     private TextView status, subtitle, total;
     private Button language, settings;
-    private boolean italian;
+    private boolean spanish;
     private int dumpedCount = 0;
     private final ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90);
     private android.content.SharedPreferences prefs;
@@ -29,7 +29,7 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         prefs = getSharedPreferences("dumping", MODE_PRIVATE);
-        italian = "it".equals(prefs.getString("language", "en"));
+        spanish = "es".equals(prefs.getString("language", "en"));
         buildUi();
         if (prefs.getString("server", "").isEmpty()) showSettings(); else focusScanner();
     }
@@ -47,7 +47,7 @@ public class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text("DUMPING", 28, Color.rgb(17,24,39)); title.setTypeface(null, Typeface.BOLD);
         bar.addView(title, new LinearLayout.LayoutParams(0,-2,1));
-        language = new Button(this); language.setOnClickListener(v -> { italian=!italian; prefs.edit().putString("language",italian?"it":"en").apply(); buildUi(); focusScanner(); });
+        language = new Button(this); language.setOnClickListener(v -> { spanish=!spanish; prefs.edit().putString("language",spanish?"es":"en").apply(); buildUi(); focusScanner(); });
         settings = new Button(this); settings.setText("⚙"); settings.setOnClickListener(v -> showSettings());
         bar.addView(language); bar.addView(settings); root.addView(bar);
 
@@ -64,17 +64,17 @@ public class MainActivity extends Activity {
     }
 
     private void refreshLabels(){
-        language.setText(italian?"EN":"IT");
-        subtitle.setText(italian?"Scansiona un bin per segnarlo come rovesciato":"Scan a bin to mark it as dumped");
-        status.setText(italian?"PRONTO ALLA SCANSIONE":"READY TO SCAN");
-        total.setText((italian?"Rovesciati in questa sessione: ":"Dumped this session: ")+dumpedCount);
-        TextView h=findViewById(1001); if(h!=null) h.setText(italian?"Ultime scansioni":"Recent scans");
+        language.setText(spanish?"EN":"ES");
+        subtitle.setText(spanish?"Escanee un bin para marcarlo como volcado":"Scan a bin to mark it as dumped");
+        status.setText(spanish?"LISTO PARA ESCANEAR":"READY TO SCAN");
+        total.setText((spanish?"Volcados en esta sesión: ":"Dumped this session: ")+dumpedCount);
+        TextView h=findViewById(1001); if(h!=null) h.setText(spanish?"Escaneos recientes":"Recent scans");
     }
 
     private void submit(){
         String code=scan.getText().toString().trim().toUpperCase(Locale.ROOT);
         if(code.isEmpty()){ focusScanner(); return; }
-        scan.setEnabled(false); status.setText(italian?"CONTROLLO…":"CHECKING…"); status.setTextColor(Color.rgb(146,64,14));
+        scan.setEnabled(false); status.setText(spanish?"COMPROBANDO…":"CHECKING…"); status.setTextColor(Color.rgb(146,64,14));
         new Thread(() -> callApi(code)).start();
     }
 
@@ -91,18 +91,18 @@ public class MainActivity extends Activity {
             BufferedReader br=new BufferedReader(new InputStreamReader(is,StandardCharsets.UTF_8)); StringBuilder sb=new StringBuilder(); String line; while((line=br.readLine())!=null)sb.append(line);
             JSONObject j=new JSONObject(sb.toString()); boolean ok=j.optBoolean("ok",false);
             runOnUiThread(() -> result(ok,j.optString("barcode",code),j.optString("message",j.optString("error","Error")),j));
-        } catch(Exception e){ runOnUiThread(() -> result(false,code,italian?"Connessione al server non riuscita":"Server connection failed",null)); }
+        } catch(Exception e){ runOnUiThread(() -> result(false,code,spanish?"No se pudo conectar con el servidor":"Server connection failed",null)); }
     }
 
     private void result(boolean ok,String barcode,String message,JSONObject data){
         scan.setEnabled(true); scan.setText("");
         if(ok){
-            dumpedCount++; tone.startTone(ToneGenerator.TONE_PROP_ACK,180); status.setText("✓ "+barcode+"  "+(italian?"ROVESCIATO":"DUMPED")); status.setTextColor(Color.rgb(21,128,61));
+            dumpedCount++; tone.startTone(ToneGenerator.TONE_PROP_ACK,180); status.setText("✓ "+barcode+"  "+(spanish?"VOLCADO":"DUMPED")); status.setTextColor(Color.rgb(21,128,61));
             String detail=barcode;
             if(data!=null){ String grower=data.optString("grower",""); String variety=data.optString("variety",""); String lot=data.optString("lot",""); detail += "\n"+grower+(variety.isEmpty()?"":" · "+variety)+(lot.isEmpty()?"":" · Lot "+lot); }
             TextView row=text("✓ "+detail,17,Color.rgb(21,128,61)); history.addView(row,0);
         } else { tone.startTone(ToneGenerator.TONE_PROP_NACK,350); status.setText("✕ "+message); status.setTextColor(Color.rgb(185,28,28)); TextView row=text("✕ "+barcode+" — "+message,16,Color.rgb(185,28,28)); history.addView(row,0); }
-        total.setText((italian?"Rovesciati in questa sessione: ":"Dumped this session: ")+dumpedCount); focusScanner();
+        total.setText((spanish?"Volcados en esta sesión: ":"Dumped this session: ")+dumpedCount); focusScanner();
     }
 
     private void focusScanner(){ scan.requestFocus(); scan.setSelection(scan.length()); }
@@ -111,8 +111,8 @@ public class MainActivity extends Activity {
         LinearLayout box=new LinearLayout(this); box.setPadding(30,5,30,5); box.setOrientation(LinearLayout.VERTICAL);
         EditText server=new EditText(this); server.setHint("http://192.168.1.10/smproduce/"); server.setText(prefs.getString("server","")); box.addView(server);
         EditText key=new EditText(this); key.setHint("API key"); key.setText(prefs.getString("key","SM-DUMPING-2026")); box.addView(key);
-        new AlertDialog.Builder(this).setTitle(italian?"Impostazioni server":"Server settings").setView(box)
-            .setPositiveButton(italian?"Salva":"Save",(d,w)->{ String s=server.getText().toString().trim(); if(!s.isEmpty()&&!s.startsWith("http"))s="http://"+s; prefs.edit().putString("server",s).putString("key",key.getText().toString()).apply(); focusScanner(); })
-            .setNegativeButton(italian?"Annulla":"Cancel",null).show();
+        new AlertDialog.Builder(this).setTitle(spanish?"Configuración del servidor":"Server settings").setView(box)
+            .setPositiveButton(spanish?"Guardar":"Save",(d,w)->{ String s=server.getText().toString().trim(); if(!s.isEmpty()&&!s.startsWith("http"))s="http://"+s; prefs.edit().putString("server",s).putString("key",key.getText().toString()).apply(); focusScanner(); })
+            .setNegativeButton(spanish?"Cancelar":"Cancel",null).show();
     }
 }
