@@ -344,7 +344,7 @@ include '../includes/header.php';
                                         <td class="row-num"><?= $idx + 1 ?></td>
                                         <td>
                                             <div class="vstack gap-2 sku-search-wrap">
-                                                <input type="text" class="form-control sku-search" placeholder="Type SKU, variety, packaging or size..." autocomplete="off">
+                                                <input type="text" class="form-control sku-search" placeholder="Type words in any order: Gala bag 100..." autocomplete="off">
                                                 <div class="sku-suggestions" role="listbox"></div>
                                                 <select name="sku_id[]" class="form-select sku-select" required>
                                                     <option value="">Select SKU...</option>
@@ -622,7 +622,7 @@ document.addEventListener('DOMContentLoaded', function(){
             const originalOptions = Array.from(select.options).map(opt => ({
                 value: opt.value,
                 text: opt.textContent.trim(),
-                search: opt.textContent.toLowerCase()
+                search: opt.textContent.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
             }));
             let matches = [];
             let activeIndex = -1;
@@ -635,8 +635,21 @@ document.addEventListener('DOMContentLoaded', function(){
             }
 
             function renderSuggestions(){
-                const q = searchInput.value.trim().toLowerCase();
-                matches = originalOptions.filter(opt => opt.value !== '' && (q === '' || opt.search.includes(q))).slice(0, 30);
+                const terms = searchInput.value
+                    .trim()
+                    .toLowerCase()
+                    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                    .split(/\s+/)
+                    .filter(Boolean);
+                matches = originalOptions
+                    .filter(opt => opt.value !== '' && terms.every(term => opt.search.includes(term)))
+                    .sort(function(a,b){
+                        if(!terms.length) return a.text.localeCompare(b.text, undefined, {numeric:true});
+                        const aStarts = terms.reduce((n,t) => n + (a.search.startsWith(t) ? 1 : 0), 0);
+                        const bStarts = terms.reduce((n,t) => n + (b.search.startsWith(t) ? 1 : 0), 0);
+                        return bStarts - aStarts || a.text.localeCompare(b.text, undefined, {numeric:true});
+                    })
+                    .slice(0, 50);
                 activeIndex = -1;
                 suggestionBox.innerHTML = '';
                 if(!matches.length){
