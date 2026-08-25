@@ -168,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['report_action'])) {
         $g = $mysqli->real_escape_string((string)$record['grower']);
         $t = $mysqli->real_escape_string((string)$record['type']);
         $balanceRow = $mysqli->query("SELECT COALESCE(SUM(quantity),0) AS total FROM empty_bins WHERE grower='$g' AND type='$t'")->fetch_assoc();
-        $overallRow = $mysqli->query("SELECT COALESCE(SUM(quantity),0) AS total FROM empty_bins")->fetch_assoc();
+        $growerTotalRow = $mysqli->query("SELECT COALESCE(SUM(quantity),0) AS total FROM empty_bins WHERE grower='$g'")->fetch_assoc();
 
         $reportResult = ebr_generate_receipt_pdf([
             'id'=>(int)$record['id'],
@@ -182,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['report_action'])) {
             'entered_by'=>'',
         ], [
             'grower_type_balance'=>(int)($balanceRow['total'] ?? 0),
-            'overall_empty_bins'=>(int)($overallRow['total'] ?? 0),
+            'grower_empty_bins'=>(int)($growerTotalRow['total'] ?? 0),
         ]);
 
         if (empty($reportResult['ok'])) {
@@ -363,7 +363,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             /* Automatic PDF receiving report */
             $balanceRow = $mysqli->query("SELECT COALESCE(SUM(quantity),0) AS total FROM empty_bins WHERE grower='$g' AND type='$t'")->fetch_assoc();
-            $overallRow = $mysqli->query("SELECT COALESCE(SUM(quantity),0) AS total FROM empty_bins")->fetch_assoc();
+            $growerTotalRow = $mysqli->query("SELECT COALESCE(SUM(quantity),0) AS total FROM empty_bins WHERE grower='$g'")->fetch_assoc();
 
             $receiptRow = [
                 'id'         => $newId,
@@ -378,7 +378,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
             $reportResult = ebr_generate_receipt_pdf($receiptRow, [
                 'grower_type_balance' => (int)($balanceRow['total'] ?? 0),
-                'overall_empty_bins'  => (int)($overallRow['total'] ?? 0),
+                'grower_empty_bins'   => (int)($growerTotalRow['total'] ?? 0),
             ]);
 
             // Keep the generated receipt permanently linked to the positive Movement Log row.
