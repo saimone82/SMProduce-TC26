@@ -211,6 +211,7 @@ $packagingPresetsReady = false;
 $packagingPresets = [];
 $packagingPresetError = '';
 $orderLocationPresets = ['pick' => [], 'city' => []];
+$orderClientPresets = [];
 
 try {
     if (orders_sql_ready()) {
@@ -449,6 +450,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         header('Location: settings.php#receiving-presets-section');
+        exit;
+    }
+
+    // Order Client Presets
+    if (isset($_POST['order_client_preset_action'])) {
+        $act = trim((string)($_POST['order_client_preset_action'] ?? ''));
+        if (!$packagingPresetsReady || !isset($ordersDb) || !($ordersDb instanceof PDO)) {
+            sp_flash_set('orderClientPresetFlash', 'Orders database is not available.');
+            header('Location: settings.php#order-client-presets-section');
+            exit;
+        }
+        try {
+            if ($act === 'save') {
+                $id = (int)($_POST['order_client_preset_id'] ?? 0);
+                $name = trim((string)($_POST['order_client_preset_name'] ?? ''));
+                $active = !empty($_POST['order_client_preset_active']) ? 1 : 0;
+                if ($name === '') throw new RuntimeException('Client name is required.');
+                if (mb_strlen($name) > 150) throw new RuntimeException('Client name is too long.');
+                $dupe = $ordersDb->prepare("SELECT id FROM order_clients WHERE LOWER(client_name)=LOWER(?) AND id<>? LIMIT 1");
+                $dupe->execute([$name,$id]);
+                if ($dupe->fetchColumn()) throw new RuntimeException('A Client with this name already exists.');
+                if ($id > 0) {
+                    $st = $ordersDb->prepare("UPDATE order_clients SET client_name=?,active=? WHERE id=?");
+                    $st->execute([$name,$active,$id]);
+                    if (!$st->rowCount()) {
+                        $chk = $ordersDb->prepare("SELECT id FROM order_clients WHERE id=?");
+                        $chk->execute([$id]);
+                        if (!$chk->fetchColumn()) throw new RuntimeException('Client not found.');
+                    }
+                    sp_flash_set('orderClientPresetFlash', 'Client updated.');
+                } else {
+                    $st = $ordersDb->prepare("INSERT INTO order_clients(client_name,active) VALUES(?,?)");
+                    $st->execute([$name,$active]);
+                    sp_flash_set('orderClientPresetFlash', 'Client added.');
+                }
+            } elseif ($act === 'delete') {
+                $id = (int)($_POST['order_client_preset_id'] ?? 0);
+                $st = $ordersDb->prepare("SELECT COUNT(*) FROM orders WHERE client_id=?");
+                $st->execute([$id]);
+                $usage = (int)$st->fetchColumn();
+                if ($usage > 0) throw new RuntimeException('This Client is used by '.$usage.' order'.($usage===1?'':'s').'. Disable or rename it instead of deleting it.');
+                $st = $ordersDb->prepare("DELETE FROM order_clients WHERE id=?");
+                $st->execute([$id]);
+                if (!$st->rowCount()) throw new RuntimeException('Client not found.');
+                sp_flash_set('orderClientPresetFlash', 'Client deleted.');
+            }
+        } catch (Throwable $e) {
+            sp_flash_set('orderClientPresetFlash', 'Client Presets: '.$e->getMessage());
+        }
+        header('Location: settings.php#order-client-presets-section');
         exit;
     }
 
@@ -901,6 +952,7 @@ $logFlash            = sp_flash_get($flash, 'logFlash', '');
 $keyenceSettingsFlash= sp_flash_get($flash, 'keyenceSettingsFlash', '');
 $packagingPresetFlash = sp_flash_get($flash, 'packagingPresetFlash', '');
 $orderLocationPresetFlash = sp_flash_get($flash, 'orderLocationPresetFlash', '');
+$orderClientPresetFlash = sp_flash_get($flash, 'orderClientPresetFlash', '');
 $receivingPresetFlash = sp_flash_get($flash, 'receivingPresetFlash', '');
 
 /* ==========================================================
@@ -992,6 +1044,11 @@ if ($receivingPresetsReady && $pdo instanceof PDO) {
 
 if ($packagingPresetsReady && isset($ordersDb) && $ordersDb instanceof PDO) {
     try {
+        $orderClientPresets = $ordersDb->query(
+            "SELECT c.id,c.client_name,c.active,c.created_at,
+                    (SELECT COUNT(*) FROM orders o WHERE o.client_id=c.id) AS usage_count
+             FROM order_clients c ORDER BY c.client_name ASC,c.id ASC"
+        )->fetchAll(PDO::FETCH_ASSOC);
         $orderLocationPresets['pick'] = $ordersDb->query(
             "SELECT p.id,p.label,
                     (SELECT COUNT(*) FROM orders o WHERE o.pick_location=p.label) AS usage_count
@@ -1602,6 +1659,69 @@ include __DIR__ . '/../includes/header.php';
     </div>
   </div>
 
+
+  <!-- ========================= ORDER CLIENT PRESETS ========================= -->
+  <div class="card mb-5 shadow-sm border-dark" id="order-client-presets-section">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <strong>👤 Order Client Presets</strong>
+        <div class="small opacity-75">Central management for Clients available in New Order</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <?php if ($orderClientPresetFlash): ?>
+        <div class="alert alert-info py-2"><?= sp_h($orderClientPresetFlash) ?></div>
+      <?php endif; ?>
+      <?php if (!$packagingPresetsReady): ?>
+        <div class="alert alert-danger mb-0">Orders database is not available.</div>
+      <?php else: ?>
+        <form method="post" class="row g-2 align-items-end mb-4 border rounded-3 p-3 bg-light">
+          <input type="hidden" name="order_client_preset_action" value="save">
+          <div class="col-md-8">
+            <label class="form-label fw-semibold">New Client</label>
+            <input type="text" name="order_client_preset_name" class="form-control" maxlength="150" placeholder="Client name" required>
+          </div>
+          <div class="col-md-2">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" name="order_client_preset_active" value="1" id="newOrderClientActive" checked>
+              <label class="form-check-label" for="newOrderClientActive">Active</label>
+            </div>
+          </div>
+          <div class="col-md-2 d-grid"><button class="btn btn-dark" type="submit">Add Client</button></div>
+        </form>
+
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light"><tr><th>Client</th><th style="width:110px">Active</th><th style="width:110px">Orders</th><th class="text-end" style="width:190px">Actions</th></tr></thead>
+            <tbody>
+            <?php if (!$orderClientPresets): ?>
+              <tr><td colspan="4" class="text-center text-muted py-4">No Clients configured.</td></tr>
+            <?php endif; ?>
+            <?php foreach ($orderClientPresets as $client): ?>
+              <tr>
+                <form method="post">
+                  <input type="hidden" name="order_client_preset_action" value="save">
+                  <input type="hidden" name="order_client_preset_id" value="<?= (int)$client['id'] ?>">
+                  <td><input type="text" name="order_client_preset_name" class="form-control form-control-sm fw-semibold" maxlength="150" value="<?= sp_h($client['client_name']) ?>" required></td>
+                  <td><div class="form-check"><input class="form-check-input" type="checkbox" name="order_client_preset_active" value="1" <?= (int)$client['active']===1?'checked':'' ?>><label class="form-check-label"><?= (int)$client['active']===1?'Yes':'No' ?></label></div></td>
+                  <td><span class="badge text-bg-light"><?= (int)$client['usage_count'] ?></span></td>
+                  <td class="text-end"><button class="btn btn-sm btn-outline-primary" type="submit">Save</button>
+                </form>
+                  <form method="post" class="d-inline" onsubmit="return confirm('Delete Client <?= sp_h(addslashes($client['client_name'])) ?>?');">
+                    <input type="hidden" name="order_client_preset_action" value="delete">
+                    <input type="hidden" name="order_client_preset_id" value="<?= (int)$client['id'] ?>">
+                    <button class="btn btn-sm btn-outline-danger" type="submit" <?= (int)$client['usage_count']>0?'disabled title="Client is used by existing orders"':'' ?>>Delete</button>
+                  </form>
+                  </td>
+              </tr>
+            <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+        <div class="small text-muted mt-3">Inactive clients no longer appear in New Order. Clients already used by an order can be renamed or disabled, but not deleted.</div>
+      <?php endif; ?>
+    </div>
+  </div>
 
   <!-- ========================= ORDER LOCATION PRESETS ========================= -->
   <div class="card mb-5 shadow-sm border-info" id="order-location-presets-section">
