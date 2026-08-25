@@ -216,7 +216,7 @@ include '../includes/header.php';
 .order-head{padding:22px 24px;border-bottom:1px solid #e7edf2;background:#fff}.order-body{padding:24px}.panel{border:1px solid #e5eaf0;border-radius:16px;background:linear-gradient(180deg,#fff 0%,#f8fbfd 100%);padding:18px;height:100%}
 .panel-title{font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:800;margin-bottom:14px}.readonly-pill{display:inline-flex;align-items:center;padding:8px 12px;border-radius:999px;background:#f1f5f9;color:#334155;font-size:.85rem;font-weight:700}
 .line-table th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:#475569}.sku-search{font-size:.9rem}
-.sku-search-wrap{position:relative}.sku-suggestions{position:absolute;z-index:1050;top:38px;left:0;right:0;max-height:260px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-top:0;border-radius:0 0 .5rem .5rem;box-shadow:0 10px 24px rgba(15,23,42,.14);display:none}.sku-suggestions.show{display:block}.sku-suggestion{display:block;width:100%;border:0;border-bottom:1px solid #eef2f7;background:#fff;padding:9px 12px;text-align:left;font-size:.88rem;color:#17212b}.sku-suggestion:last-child{border-bottom:0}.sku-suggestion:hover,.sku-suggestion.active{background:#eff6ff;color:#1d4ed8}.sku-suggestion-empty{padding:9px 12px;color:#64748b;font-size:.86rem}
+.sku-search-wrap{position:relative}.sku-suggestions{max-height:280px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:.5rem;box-shadow:0 8px 18px rgba(15,23,42,.10);display:none}.sku-suggestions.show{display:block}.sku-suggestion{display:block;width:100%;border:0;border-bottom:1px solid #eef2f7;background:#fff;padding:10px 12px;text-align:left;font-size:.88rem;color:#17212b}.sku-suggestion:last-child{border-bottom:0}.sku-suggestion:hover,.sku-suggestion.active{background:#eff6ff;color:#1d4ed8}.sku-suggestion-empty{padding:10px 12px;color:#64748b;font-size:.86rem}.sku-selected{font-size:.82rem;color:#166534;font-weight:700;display:none}.sku-selected.show{display:block}.sku-select{display:none!important}
 </style>
 <div class="container-fluid py-4 px-3 px-xl-4">
     <div class="order-shell">
@@ -346,14 +346,17 @@ include '../includes/header.php';
                                             <div class="vstack gap-2 sku-search-wrap">
                                                 <input type="text" class="form-control sku-search" placeholder="Type words in any order: Gala bag 100..." autocomplete="off">
                                                 <div class="sku-suggestions" role="listbox"></div>
-                                                <select name="sku_id[]" class="form-select sku-select" required>
+                                                <div class="sku-selected"></div>
+                                                <select name="sku_id[]" class="form-select sku-select" aria-hidden="true" tabindex="-1">
                                                     <option value="">Select SKU...</option>
                                                     <?php foreach ($skus as $sku): ?>
                                                         <?php
                                           $skuDesc = trim(implode(' - ', array_values(array_filter([(string)($sku['variety'] ?? ''), (string)($sku['packaging'] ?? ''), (string)($sku['size'] ?? '')], fn($v) => $v !== ''))));
                                           if ($skuDesc === '') $skuDesc = 'SKU ' . $sku['sku_id'];
                                         ?>
-                                        <option value="<?= (int)$sku['sku_id'] ?>" <?= (string)$row['sku_id'] === (string)$sku['sku_id'] ? 'selected' : '' ?>><?= orders_h('SKU ' . $sku['sku_id'] . ' — ' . $skuDesc) ?></option>
+                                        <option value="<?= (int)$sku['sku_id'] ?>"
+                                                data-search="<?= orders_h(implode(' ', [(string)$sku['sku_id'], (string)($sku['variety'] ?? ''), (string)($sku['packaging'] ?? ''), (string)($sku['size'] ?? '')])) ?>"
+                                                <?= (string)$row['sku_id'] === (string)$sku['sku_id'] ? 'selected' : '' ?>><?= orders_h('SKU ' . $sku['sku_id'] . ' — ' . $skuDesc) ?></option>
                                                     <?php endforeach; ?>
                                                 </select>
                                             </div>
@@ -608,6 +611,8 @@ document.addEventListener('DOMContentLoaded', function(){
                     row.querySelector('input[name="quantity[]"]').value = '';
                     const search = row.querySelector('.sku-search');
                     if(search) search.value = '';
+                    const selected = row.querySelector('.sku-selected');
+                    if(selected){ selected.textContent = ''; selected.classList.remove('show'); }
                 } else {
                     row.remove();
                     renumber();
@@ -618,11 +623,12 @@ document.addEventListener('DOMContentLoaded', function(){
         const searchInput = row.querySelector('.sku-search');
         const select = row.querySelector('.sku-select');
         const suggestionBox = row.querySelector('.sku-suggestions');
+        const selectedBox = row.querySelector('.sku-selected');
         if(searchInput && select && suggestionBox){
             const originalOptions = Array.from(select.options).map(opt => ({
                 value: opt.value,
                 text: opt.textContent.trim(),
-                search: opt.textContent.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                search: (opt.dataset.search || opt.textContent).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
             }));
             let matches = [];
             let activeIndex = -1;
@@ -631,6 +637,10 @@ document.addEventListener('DOMContentLoaded', function(){
                 select.value = opt.value;
                 searchInput.value = opt.text;
                 suggestionBox.classList.remove('show');
+                if(selectedBox){
+                    selectedBox.textContent = 'Selected: ' + opt.text;
+                    selectedBox.classList.add('show');
+                }
                 select.dispatchEvent(new Event('change', {bubbles:true}));
             }
 
@@ -641,6 +651,14 @@ document.addEventListener('DOMContentLoaded', function(){
                     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
                     .split(/\s+/)
                     .filter(Boolean);
+                if(!terms.length){
+                    matches = [];
+                    suggestionBox.innerHTML = '';
+                    suggestionBox.classList.remove('show');
+                    return;
+                }
+                if(selectedBox) selectedBox.classList.remove('show');
+                select.value = '';
                 matches = originalOptions
                     .filter(opt => opt.value !== '' && terms.every(term => opt.search.includes(term)))
                     .sort(function(a,b){
@@ -670,7 +688,7 @@ document.addEventListener('DOMContentLoaded', function(){
                 suggestionBox.classList.add('show');
             }
 
-            searchInput.addEventListener('focus', renderSuggestions);
+            searchInput.addEventListener('focus', function(){ if(this.value.trim() !== '') renderSuggestions(); });
             searchInput.addEventListener('input', renderSuggestions);
             searchInput.addEventListener('keydown', function(e){
                 if(!suggestionBox.classList.contains('show')) return;
@@ -694,10 +712,16 @@ document.addEventListener('DOMContentLoaded', function(){
             });
             select.addEventListener('change', function(){
                 const chosen = originalOptions.find(opt => opt.value === select.value);
-                if(chosen) searchInput.value = chosen.text;
+                if(chosen){
+                    searchInput.value = chosen.text;
+                    if(selectedBox){ selectedBox.textContent = 'Selected: ' + chosen.text; selectedBox.classList.add('show'); }
+                }
             });
             const initiallySelected = originalOptions.find(opt => opt.value === select.value);
-            if(initiallySelected) searchInput.value = initiallySelected.text;
+            if(initiallySelected){
+                searchInput.value = initiallySelected.text;
+                if(selectedBox){ selectedBox.textContent = 'Selected: ' + initiallySelected.text; selectedBox.classList.add('show'); }
+            }
         }
     }
 
@@ -716,6 +740,8 @@ document.addEventListener('DOMContentLoaded', function(){
             if(input.name === 'quantity[]' || input.classList.contains('sku-search')) input.value = '';
         });
         clone.querySelectorAll('select').forEach(function(select){ select.value = ''; });
+        clone.querySelectorAll('.sku-selected').forEach(function(el){ el.textContent = ''; el.classList.remove('show'); });
+        clone.querySelectorAll('.sku-suggestions').forEach(function(el){ el.innerHTML = ''; el.classList.remove('show'); });
         // Reset pack-select su nuova riga
         clone.querySelectorAll('.pack-select').forEach(function(sel){ sel.value = ''; });
         tableBody.appendChild(clone);
