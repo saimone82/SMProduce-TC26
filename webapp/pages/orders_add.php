@@ -405,7 +405,6 @@ include '../includes/header.php';
       <div id="newPackErr" class="text-danger small mt-1" style="display:none;"></div>
     </div>
     <div class="modal-footer">
-      <a href="settings.php#packaging-presets-section" class="btn btn-outline-dark me-auto">Manage Presets</a>
       <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
       <button type="button" class="btn btn-primary" id="savePackPreset">Save</button>
     </div>
