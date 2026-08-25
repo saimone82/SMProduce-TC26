@@ -940,7 +940,7 @@ function sort_link($label, $col, $currentSort, $currentDir, $prefix) {
   <nav class="db-topbar-nav">
     <a href="bins_ingresso.php">📦 Full Bins</a>
     <a href="empty_bin_receiving.php">🗑️ Empty Bins</a>
-    <a href="dashboard.php">🏠 Dashboard</a>
+    <a href="/chooser.php">🏠 Main Menu</a>
   </nav>
   <div class="db-chip-area">
     <span class="db-chip db-chip-av" id="topChipAv">
