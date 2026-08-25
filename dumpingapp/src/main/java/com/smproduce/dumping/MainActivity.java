@@ -150,7 +150,7 @@ public class MainActivity extends Activity {
         scan = new EditText(this); scan.setTextSize(25); scan.setSingleLine(true); scan.setHint("FBIN-000123"); scan.setImeOptions(EditorInfo.IME_ACTION_DONE); scan.setInputType(1); scan.setSelectAllOnFocus(true);
         scan.setOnEditorActionListener((v,id,event) -> { if(id==EditorInfo.IME_ACTION_DONE || (event!=null&&event.getKeyCode()==KeyEvent.KEYCODE_ENTER)){ submit(); return true;} return false; });
         root.addView(scan, new LinearLayout.LayoutParams(-1,90));
-        Button dump = new Button(this); dump.setText("SCAN / DUMP"); dump.setTextSize(19); dump.setOnClickListener(v -> submit()); root.addView(dump,new LinearLayout.LayoutParams(-1,80));
+        Button dump = new Button(this); dump.setText(spanish?"ESCANEAR / VOLCAR":"SCAN / DUMP"); dump.setTextSize(19); dump.setOnClickListener(v -> submit()); root.addView(dump,new LinearLayout.LayoutParams(-1,80));
         status = text("",20,Color.DKGRAY); status.setGravity(Gravity.CENTER); status.setTypeface(null,Typeface.BOLD); root.addView(status,new LinearLayout.LayoutParams(-1,90));
         total = text("",18,Color.rgb(21,128,61)); total.setGravity(Gravity.CENTER); root.addView(total);
         TextView h = text("",19,Color.rgb(17,24,39)); h.setId(1001); h.setTypeface(null,Typeface.BOLD); root.addView(h);
@@ -185,7 +185,8 @@ public class MainActivity extends Activity {
             InputStream is=c.getResponseCode()<400?c.getInputStream():c.getErrorStream();
             BufferedReader br=new BufferedReader(new InputStreamReader(is,StandardCharsets.UTF_8)); StringBuilder sb=new StringBuilder(); String line; while((line=br.readLine())!=null)sb.append(line);
             JSONObject j=new JSONObject(sb.toString()); boolean ok=j.optBoolean("ok",false);
-            runOnUiThread(() -> result(ok,j.optString("barcode",code),j.optString("message",j.optString("error","Error")),j));
+            String localized = ok ? (spanish?"Volcado":"Dumped") : localizedError(j.optString("reason","server_error"));
+            runOnUiThread(() -> result(ok,j.optString("barcode",code),localized,j));
         } catch(Exception e){ runOnUiThread(() -> result(false,code,spanish?"No se pudo conectar con el servidor":"Server connection failed",null)); }
     }
 
@@ -194,7 +195,7 @@ public class MainActivity extends Activity {
         if(ok){
             dumpedCount++; tone.startTone(ToneGenerator.TONE_PROP_ACK,180); status.setText("✓ "+barcode+"  "+(spanish?"VOLCADO":"DUMPED")); status.setTextColor(Color.rgb(21,128,61));
             String detail=barcode;
-            if(data!=null){ String grower=data.optString("grower",""); String variety=data.optString("variety",""); String lot=data.optString("lot",""); detail += "\n"+grower+(variety.isEmpty()?"":" · "+variety)+(lot.isEmpty()?"":" · Lot "+lot); }
+            if(data!=null){ String grower=data.optString("grower",""); String variety=data.optString("variety",""); String lot=data.optString("lot",""); detail += "\n"+grower+(variety.isEmpty()?"":" · "+variety)+(lot.isEmpty()?"":" · "+(spanish?"Lote ":"Lot ")+lot); }
             TextView row=text("✓ "+detail,17,Color.rgb(21,128,61)); history.addView(row,0);
         } else { tone.startTone(ToneGenerator.TONE_PROP_NACK,350); status.setText("✕ "+message); status.setTextColor(Color.rgb(185,28,28)); TextView row=text("✕ "+barcode+" — "+message,16,Color.rgb(185,28,28)); history.addView(row,0); }
         total.setText((spanish?"Volcados en esta sesión: ":"Dumped this session: ")+dumpedCount); focusScanner();
@@ -202,10 +203,22 @@ public class MainActivity extends Activity {
 
     private void focusScanner(){ scan.requestFocus(); scan.setSelection(scan.length()); }
 
+    private String localizedError(String reason) {
+        switch (reason) {
+            case "invalid_key": return spanish ? "Clave API no válida" : "Invalid API key";
+            case "invalid_code": return spanish ? "Código no válido. Use FBIN-000123 o el ID numérico" : "Invalid code. Use FBIN-000123 or numeric ID";
+            case "not_found": return spanish ? "Bin no encontrado" : "Bin not found";
+            case "unavailable": return spanish ? "Bin ya volcado o no disponible" : "Bin already dumped or unavailable";
+            case "status_changed": return spanish ? "El estado del bin cambió. Escanee de nuevo" : "Bin status changed. Scan again";
+            case "post_required": return spanish ? "Solicitud no válida" : "Invalid request";
+            default: return spanish ? "Error del servidor" : "Server error";
+        }
+    }
+
     private void showSettings(){
         LinearLayout box=new LinearLayout(this); box.setPadding(30,5,30,5); box.setOrientation(LinearLayout.VERTICAL);
         EditText server=new EditText(this); server.setHint("http://192.168.1.10/smproduce/"); server.setText(prefs.getString("server","")); box.addView(server);
-        EditText key=new EditText(this); key.setHint("API key"); key.setText(prefs.getString("key","SM-DUMPING-2026")); box.addView(key);
+        EditText key=new EditText(this); key.setHint(spanish?"Clave API":"API key"); key.setText(prefs.getString("key","SM-DUMPING-2026")); box.addView(key);
         new AlertDialog.Builder(this).setTitle(spanish?"Configuración del servidor":"Server settings").setView(box)
             .setPositiveButton(spanish?"Guardar":"Save",(d,w)->{ String s=server.getText().toString().trim(); if(!s.isEmpty()&&!s.startsWith("http"))s="http://"+s; prefs.edit().putString("server",s).putString("key",key.getText().toString()).apply(); focusScanner(); })
             .setNegativeButton(spanish?"Cancelar":"Cancel",null).show();
