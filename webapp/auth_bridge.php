@@ -21,7 +21,7 @@ if (!function_exists('sp_app_base_path')) {
 
 if (!function_exists('sp_default_dashboard_target')) {
     function sp_default_dashboard_target(): string {
-        return sp_app_base_path() . '/chooser.php';
+        return sp_app_base_path() . '/pages/dashboard_report.php';
     }
 }
 

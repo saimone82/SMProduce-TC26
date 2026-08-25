@@ -56,7 +56,7 @@ if (!function_exists('ch_front_make_cherry_token')) {
 }
 
 if (!empty($_SESSION['user'])) {
-    header('Location: /chooser.php');
+    header('Location: /pages/dashboard_report.php');
     exit;
 }
 
@@ -115,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'auth_source' => 'apple',
                     ];
                     session_regenerate_id(true);
-                    header('Location: /chooser.php');
+                    header('Location: /pages/dashboard_report.php');
                     exit;
                 }
                 $error = 'Invalid username or password.';

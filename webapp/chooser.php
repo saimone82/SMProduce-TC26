@@ -468,7 +468,7 @@ body::before {
   <div class="ch-cards">
 
     <!-- ── APPLE CARD ── -->
-    <a href="/pages/production_summary.php" class="ch-card apple">
+    <a href="/pages/dashboard_report.php" class="ch-card apple">
       <div class="ch-fruit">🍎</div>
       <div class="ch-card-title">Apple Packing</div>
       <div class="ch-card-desc">Open the Apple packing web app with the current shared login.</div>

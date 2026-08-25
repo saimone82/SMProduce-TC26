@@ -26,7 +26,7 @@ if ($isMob) {
     header('Location: /auth/mobile_login.php');
 } else {
     header(!empty($_SESSION['user'])
-        ? 'Location: /chooser.php'
+        ? 'Location: /pages/dashboard_report.php'
         : 'Location: /auth/login.php');
 }
 exit;
