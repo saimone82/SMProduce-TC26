@@ -17,6 +17,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public class MainActivity extends Activity {
+    private static final String PROFILE = "SM_PRODUCE_DUMPING";
+    private static final String DW_API_ACTION = "com.symbol.datawedge.api.ACTION";
+    private static final String DW_SET_CONFIG = "com.symbol.datawedge.api.SET_CONFIG";
+    private static final String DW_DATA = "com.symbol.datawedge.data_string";
     private LinearLayout root, history;
     private EditText scan;
     private TextView status, subtitle, total;
@@ -25,13 +29,104 @@ public class MainActivity extends Activity {
     private int dumpedCount = 0;
     private final ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90);
     private android.content.SharedPreferences prefs;
+    private final BroadcastReceiver scanReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!BuildConfig.DW_ACTION.equals(intent.getAction())) return;
+            String value = intent.getStringExtra(DW_DATA);
+            if (value == null || value.trim().isEmpty() || !scan.isEnabled()) return;
+            scan.setText(value.trim());
+            submit();
+        }
+    };
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
         prefs = getSharedPreferences("dumping", MODE_PRIVATE);
         spanish = "es".equals(prefs.getString("language", "en"));
         buildUi();
+        registerDataWedgeReceiver();
+        new Handler(Looper.getMainLooper()).postDelayed(this::setupDataWedge, 500);
         if (prefs.getString("server", "").isEmpty()) showSettings(); else focusScanner();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        new Handler(Looper.getMainLooper()).postDelayed(this::setupDataWedge, 300);
+    }
+
+    @Override protected void onDestroy() {
+        try { unregisterReceiver(scanReceiver); } catch (Exception ignored) {}
+        tone.release();
+        super.onDestroy();
+    }
+
+    private void registerDataWedgeReceiver() {
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(BuildConfig.DW_ACTION);
+        filter.addCategory(Intent.CATEGORY_DEFAULT);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(scanReceiver, filter, Context.RECEIVER_EXPORTED);
+        else registerReceiver(scanReceiver, filter);
+    }
+
+    private void sendDataWedgeConfig(Bundle config) {
+        Intent intent = new Intent(DW_API_ACTION);
+        intent.setPackage("com.symbol.datawedge");
+        intent.putExtra(DW_SET_CONFIG, config);
+        sendBroadcast(intent);
+    }
+
+    private Bundle dataWedgeProfile(String mode) {
+        Bundle profile = new Bundle();
+        profile.putString("PROFILE_NAME", PROFILE);
+        profile.putString("PROFILE_ENABLED", "true");
+        profile.putString("CONFIG_MODE", mode);
+        return profile;
+    }
+
+    private void setupDataWedge() {
+        try {
+            Bundle create = dataWedgeProfile("CREATE_IF_NOT_EXIST");
+            Bundle app = new Bundle();
+            app.putString("PACKAGE_NAME", getPackageName());
+            app.putStringArray("ACTIVITY_LIST", new String[]{"*"});
+            create.putParcelableArray("APP_LIST", new Bundle[]{app});
+            sendDataWedgeConfig(create);
+
+            Bundle barcode = dataWedgeProfile("UPDATE");
+            Bundle barcodePlugin = new Bundle();
+            barcodePlugin.putString("PLUGIN_NAME", "BARCODE");
+            barcodePlugin.putString("RESET_CONFIG", "true");
+            Bundle barcodeParams = new Bundle();
+            barcodeParams.putString("scanner_selection", "auto");
+            barcodeParams.putString("scanner_input_enabled", "true");
+            barcodePlugin.putBundle("PARAM_LIST", barcodeParams);
+            barcode.putBundle("PLUGIN_CONFIG", barcodePlugin);
+            sendDataWedgeConfig(barcode);
+
+            Bundle output = dataWedgeProfile("UPDATE");
+            Bundle intentPlugin = new Bundle();
+            intentPlugin.putString("PLUGIN_NAME", "INTENT");
+            intentPlugin.putString("RESET_CONFIG", "true");
+            Bundle intentParams = new Bundle();
+            intentParams.putString("intent_output_enabled", "true");
+            intentParams.putString("intent_action", BuildConfig.DW_ACTION);
+            intentParams.putString("intent_category", Intent.CATEGORY_DEFAULT);
+            intentParams.putString("intent_delivery", "2");
+            intentPlugin.putBundle("PARAM_LIST", intentParams);
+            output.putBundle("PLUGIN_CONFIG", intentPlugin);
+            sendDataWedgeConfig(output);
+
+            Bundle keystroke = dataWedgeProfile("UPDATE");
+            Bundle keyPlugin = new Bundle();
+            keyPlugin.putString("PLUGIN_NAME", "KEYSTROKE");
+            Bundle keyParams = new Bundle();
+            keyParams.putString("keystroke_output_enabled", "false");
+            keyPlugin.putBundle("PARAM_LIST", keyParams);
+            keystroke.putBundle("PLUGIN_CONFIG", keyPlugin);
+            sendDataWedgeConfig(keystroke);
+        } catch (Exception e) {
+            Toast.makeText(this, spanish ? "Error al configurar DataWedge" : "DataWedge setup error", Toast.LENGTH_LONG).show();
+        }
     }
 
     private TextView text(String value, int size, int color) {
