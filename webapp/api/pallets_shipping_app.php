@@ -37,6 +37,27 @@ function ps_normalize_scan_code(string $raw): string {
     return $code;
 }
 
+function ps_direct_casecode_lookup($db, string $serial): ?array {
+    $sql = "SELECT * FROM casecodes WHERE UPPER(TRIM(serial))=UPPER(TRIM(?)) LIMIT 1";
+    if ($db instanceof PDO) {
+        $st = $db->prepare($sql);
+        $st->execute([$serial]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    }
+    if ($db instanceof mysqli) {
+        $st = $db->prepare($sql);
+        if (!$st) return null;
+        $st->bind_param('s', $serial);
+        $st->execute();
+        $res = $st->get_result();
+        $row = $res ? $res->fetch_assoc() : null;
+        $st->close();
+        return is_array($row) ? $row : null;
+    }
+    return null;
+}
+
 $cfg = require __DIR__ . '/../config/pallets_shipping_app.php';
 if (empty($cfg['enabled'])) ps_out(['ok'=>0, 'err'=>'App API disabled'], 503);
 $provided = trim((string)($_SERVER['HTTP_X_APP_TOKEN'] ?? $_POST['token'] ?? ''));
@@ -82,7 +103,16 @@ function ps_shipment_detail($db, string $sid): array {
 }
 
 try {
-    if ($action === 'ping') ps_out(['ok'=>1, 'server_time'=>date(DATE_ATOM)]);
+    if ($action === 'ping') ps_out(['ok'=>1, 'api_version'=>'1.4.0', 'server_time'=>date(DATE_ATOM)]);
+
+    if ($action === 'case_check') {
+        $serial = ps_normalize_scan_code((string)($input['case_serial'] ?? ''));
+        $row = ps_direct_casecode_lookup($dbx, $serial);
+        ps_out(['ok'=>$row?1:0, 'api_version'=>'1.4.0', 'scanned_code'=>$serial,
+            'found'=>$row?1:0, 'sku'=>$row['SKU']??$row['sku']??null,
+            'variety'=>$row['variety']??null, 'grower'=>$row['grower']??null,
+            'err'=>$row?null:'Case not found in casecodes']);
+    }
 
     if ($action === 'pallet_new') {
         $pid = smp_tc26_open_pallet($dbx, $uid, '');
@@ -103,6 +133,8 @@ try {
     if ($action === 'pallet_scan_case') {
         $pid = trim((string)($input['pallet_id'] ?? ''));
         $serial = ps_normalize_scan_code((string)($input['case_serial'] ?? ''));
+        $caseRow = ps_direct_casecode_lookup($dbx, $serial);
+        if (!$caseRow) ps_out(['ok'=>0, 'err'=>'Case '.$serial.' not found in casecodes', 'scanned_code'=>$serial]);
         $existing = smp_db_fetch_one($dbx,
             "SELECT pallet_id FROM pallet_cases WHERE case_serial=? LIMIT 1", [$serial]);
         // Idempotent scan: Zebra/DataWedge can occasionally deliver the same
@@ -113,7 +145,17 @@ try {
             ps_out($detail);
         }
         if ($existing) ps_out(['ok'=>0, 'err'=>'Case '.$serial.' already belongs to pallet '.$existing['pallet_id']]);
-        $res = smp_tc26_add_case_to_pallet($dbx, $pid, $serial, $uid);
+        $res = smp_tc26_add_case_to_pallet($dbx, $pid, $serial, [
+            'user_id'=>$uid,
+            'sku'=>(string)($caseRow['SKU']??$caseRow['sku']??''),
+            'variety'=>(string)($caseRow['variety']??$caseRow['Variety']??''),
+            'grower'=>(string)($caseRow['grower']??$caseRow['Grower']??''),
+            'size'=>(string)($caseRow['size']??$caseRow['Size']??''),
+            'packaging'=>(string)($caseRow['packaging']??$caseRow['Packaging']??''),
+            'crop'=>(string)($caseRow['crop']??$caseRow['Crop']??''),
+            'lot'=>(string)($caseRow['lot']??$caseRow['Lot']??''),
+            'pack_date'=>(string)($caseRow['pack_date']??$caseRow['PackDate']??''),
+        ]);
         if (empty($res['ok'])) {
             $res['scanned_code']=$serial;
             ps_out($res);
