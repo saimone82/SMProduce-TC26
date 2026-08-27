@@ -399,7 +399,12 @@ if (!function_exists('smp_db_fetch_all')) {
 
 if (!function_exists('smp_db_fetch_one')) {
     function smp_db_fetch_one($db, string $sql, array $params = []): ?array {
-        $rows = smp_db_fetch_all($db, $sql . ' LIMIT 1', $params);
+        // Do not generate invalid SQL such as "... LIMIT 1 LIMIT 1" when the
+        // caller already supplied a LIMIT clause.
+        $query = preg_match('/\bLIMIT\s+\d+(?:\s*,\s*\d+)?\s*;?\s*$/i', $sql)
+            ? rtrim($sql, " \t\n\r\0\x0B;")
+            : rtrim($sql, " \t\n\r\0\x0B;") . ' LIMIT 1';
+        $rows = smp_db_fetch_all($db, $query, $params);
         return $rows[0] ?? null;
     }
 }
