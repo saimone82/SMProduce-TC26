@@ -342,16 +342,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['full_bin_report_action'
     $stmt=$mysqli->prepare("SELECT * FROM full_bin_receipts WHERE id=? LIMIT 1");
     $stmt->bind_param('i',$rid); $stmt->execute(); $receipt=$stmt->get_result()->fetch_assoc(); $stmt->close();
     if(!$receipt){echo json_encode(['ok'=>false,'error'=>'Receipt not found.']);exit;}
-    $file=fbr_report_file((int)$receipt['id'],(string)$receipt['receiving_date']);
-    if(!$file['exists']){
-        $growerInventory=fbr_grower_inventory($mysqli,(string)($receipt['grower']??''));
-        $gen=fbr_generate_receipt_pdf($receipt,[
-            'inventory_rows'=>$growerInventory['rows']??[],
-            'grower_total'=>(int)($growerInventory['total']??0),
-        ]);
-        if(empty($gen['ok'])){echo json_encode(['ok'=>false,'error'=>$gen['error']??'Unable to generate report.']);exit;}
-        $file=$gen;
-    }
+    // Always regenerate previews/prints so the footer contains the current
+    // AVAILABLE full-bin total for this grower, including older receipts.
+    $growerInventory=fbr_grower_inventory($mysqli,(string)($receipt['grower']??''));
+    $gen=fbr_generate_receipt_pdf($receipt,[
+        'inventory_rows'=>$growerInventory['rows']??[],
+        'grower_total'=>(int)($growerInventory['total']??0),
+    ]);
+    if(empty($gen['ok'])){echo json_encode(['ok'=>false,'error'=>$gen['error']??'Unable to generate report.']);exit;}
+    $file=$gen;
     if($action==='preview'){echo json_encode(['ok'=>true,'url'=>$file['url']]);exit;}
     if($action==='test_print'){
         $s=fbr_get_settings($mysqli); $printer=trim((string)$s['report_printer']);
@@ -1467,7 +1466,7 @@ body.eb-pdf-popup-open { overflow:hidden !important; }
     <div class="bi-topbar-right">
         <a href="bins_produzione.php"     class="bi-tbtn">🏭 Production</a>
         <a href="empty_bin_receiving.php" class="bi-tbtn">📭 Empty Bins</a>
-        <a href="/chooser.php"            class="bi-tbtn bi-tbtn-primary">🏠 Main Menu</a>
+        <a href="dashboard.php"           class="bi-tbtn bi-tbtn-primary">🏠 Dashboard</a>
     </div>
 </div>
 
