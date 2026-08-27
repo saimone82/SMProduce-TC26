@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
         switch(step){
             case HOME: heading(tr("What would you like to do?","¿Qué desea hacer?"),tr("Choose one operation","Seleccione una operación"));
                 choice("Palletizing","Paletización",v->{step=Step.PALLET_MODE;render();});
-                choice("Shipping","Envíos",v->{step=Step.SHIP_MODE;render();}); break;
+                choice("Shipping","Envíos",v->newShipment()); break;
             case PALLET_MODE: heading(tr("Palletizing","Paletización"),tr("What would you like to do?","¿Qué desea hacer?"));
                 choice("New Pallet","Nuevo pallet",v->newPallet());
                 choice("Resume Partial Pallet","Continuar pallet parcial",v->{step=Step.PALLET_RESUME;render();}); break;
@@ -89,9 +89,7 @@ public class MainActivity extends Activity {
             case PALLET_FINISH: heading(tr("What would you like to do?","¿Qué desea hacer?"),palletId+" · "+caseCount+" "+tr("cases","cajas"));
                 choice("Close as Complete","Cerrar como completo",v->finishPallet(true));
                 choice("Close as Partial","Cerrar como parcial",v->finishPallet(false)); break;
-            case SHIP_MODE: heading(tr("Shipping","Envíos"),tr("What would you like to do?","¿Qué desea hacer?"));
-                choice("New Shipment","Nuevo envío",v->newShipment());
-                choice("Resume Shipment","Continuar envío",v->{step=Step.SHIP_RESUME;render();}); break;
+            case SHIP_MODE: newShipment(); break;
             case SHIP_RESUME: scanQuestion(tr("Scan the open shipment label","Escanee la etiqueta del envío abierto"),tr("The shipment must still be open","El envío debe estar abierto")); break;
             case SHIP_ORDER: orderScreen(); break;
             case SHIP_SCAN: scanScreen(false); break;
@@ -120,7 +118,7 @@ public class MainActivity extends Activity {
         heading(tr("Select the order","Seleccione el pedido"),tr("Search by PO or customer","Busque por PO o cliente"));
         manual=new EditText(this);manual.setHint(tr("PO or customer","PO o cliente"));manual.setSingleLine();manual.setTextColor(Color.WHITE);manual.setHintTextColor(Color.GRAY);body.addView(manual,new LinearLayout.LayoutParams(-1,dp(58)));addSpace(12);
         choice("Search","Buscar",v->searchOrders(manual.getText().toString()));
-        Button skip=choice("Continue without PO","Continuar sin PO",v->{selectedOrder=null;step=Step.SHIP_SCAN;render();});skip.setBackgroundColor(Color.rgb(82,96,115));
+        Button skip=choice("Continue without PO","Continuar sin PO",v->requestSkipPassword());skip.setBackgroundColor(Color.rgb(82,96,115));
     }
 
     void goNext(){
@@ -135,7 +133,7 @@ public class MainActivity extends Activity {
         else if(step==Step.PALLET_SCAN){step=Step.PALLET_MODE;}
         else if(step==Step.PALLET_FINISH){step=Step.PALLET_SCAN;}
         else if(step==Step.SHIP_RESUME){step=Step.SHIP_MODE;}
-        else if(step==Step.SHIP_ORDER){step=Step.SHIP_MODE;}
+        else if(step==Step.SHIP_ORDER){shipmentId="";selectedOrder=null;step=Step.HOME;}
         else if(step==Step.SHIP_SCAN){step=Step.SHIP_ORDER;}
         else if(step==Step.SHIP_FINISH){step=Step.SHIP_SCAN;} render();
     }
@@ -143,7 +141,7 @@ public class MainActivity extends Activity {
 
     void newPallet(){ if(!online){error(tr("Connect to create a new pallet","Conéctese para crear un pallet"));return;} call(map("action","pallet_new"),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");step=Step.PALLET_SCAN;render();}); }
     void resumePallet(String id){if(!online){error(tr("Connect to verify the partial pallet","Conéctese para verificar el pallet parcial"));return;}call(map("action","pallet_resume","pallet_id",id),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");step=Step.PALLET_SCAN;render();});}
-    void newShipment(){if(!online){error(tr("Connect to create a shipment","Conéctese para crear un envío"));return;}call(map("action","shipment_new"),j->{shipmentId=j.optString("shipment_id");step=Step.SHIP_ORDER;render();});}
+    void newShipment(){if(busy)return;if(!online){error(tr("Connect to create a shipment","Conéctese para crear un envío"));return;}call(map("action","shipment_new"),j->{shipmentId=j.optString("shipment_id");step=Step.SHIP_ORDER;render();searchOrders("");});}
     void resumeShipment(String id){if(!online){error(tr("Connect to verify the shipment","Conéctese para verificar el envío"));return;}call(map("action","shipment_resume","shipment_id",id),j->{shipmentId=j.optString("shipment_id");palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");step=Step.SHIP_SCAN;render();});}
 
     void onScan(String raw){
@@ -167,11 +165,29 @@ public class MainActivity extends Activity {
         call(map("action",cases?"pallet_remove_last":"shipment_remove_last",cases?"pallet_id":"shipment_id",cases?palletId:shipmentId),j->{if(cases)caseCount=j.optInt("cases_count");else{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");}render();});
     }
     void finishPallet(boolean complete){ if(!online||queue.countFor(palletId)>0){error(tr("Wait for synchronization before finishing","Espere la sincronización antes de finalizar"));return;}call(map("action",complete?"pallet_close":"pallet_partial","pallet_id",palletId),j->done(complete?tr("Pallet closed as complete and sent to print","Pallet cerrado como completo y enviado a imprimir"):tr("Pallet closed as partial and sent to print","Pallet cerrado como parcial y enviado a imprimir"))); }
-    void closeShipment(){if(!online||queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before closing","Espere la sincronización antes de cerrar"));return;}call(map("action","shipment_close","shipment_id",shipmentId),j->done(tr("Shipment closed","Envío cerrado")));}
+    void closeShipment(){
+        if(!online||queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before closing","Espere la sincronización antes de cerrar"));return;}
+        call(map("action","shipment_close","shipment_id",shipmentId),closed->{
+            callUrl(BuildConfig.SHIPPING_API_URL,map("action","bol","shipment_id",shipmentId),bol->{
+                callUrl(BuildConfig.SHIPPING_API_URL,map("action","queue_bol_print","shipment_id",shipmentId),printed->{
+                    done(tr("Shipment closed. Label and BOL sent to print","Envío cerrado. Etiqueta y BOL enviados a imprimir"));
+                });
+            });
+        });
+    }
     void done(String msg){step=Step.DONE;render();subtitle.setText(msg);}
     void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;step=Step.HOME;render();}
 
     void searchOrders(String q){ if(!online){error(tr("Order search requires connection","La búsqueda requiere conexión"));return;}call(map("action","order_search","q",q),j->showOrders(j.optJSONArray("orders"))); }
+    void requestSkipPassword(){
+        final EditText input=new EditText(this);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        new AlertDialog.Builder(this).setTitle(tr("Password required","Contraseña requerida")).setView(input)
+            .setPositiveButton(tr("Continue","Continuar"),(d,w)->verifySkipPassword(input.getText().toString()))
+            .setNegativeButton(tr("Cancel","Cancelar"),null).show();
+    }
+    void verifySkipPassword(String password){
+        call(map("action","verify_skip_po_password","password",password),j->{selectedOrder=null;step=Step.SHIP_SCAN;render();});
+    }
     void showOrders(JSONArray a){
         if(a==null||a.length()==0){error(tr("No open orders found","No se encontraron pedidos abiertos"));return;}
         String[] names=new String[a.length()];for(int i=0;i<a.length();i++){JSONObject o=a.optJSONObject(i);names[i]=o.optString("po")+" · "+o.optString("customer_name");}
@@ -180,12 +196,16 @@ public class MainActivity extends Activity {
 
     interface Success{void run(JSONObject j);}
     Map<String,String> map(String...v){Map<String,String>m=new LinkedHashMap<>();for(int i=0;i+1<v.length;i+=2)m.put(v[i],v[i+1]);return m;}
-    void call(Map<String,String> data,Success success){
-        if(busy)return;busy=true; io.execute(()->{try{JSONObject j=request(data);runOnUiThread(()->{busy=false;if(j.optInt("ok")==1)success.run(j);else error(localizeError(j.optString("err",tr("Operation failed","Operación fallida"))));});}catch(Exception e){runOnUiThread(()->{busy=false;checkNetwork();error(tr("Connection error","Error de conexión")+": "+e.getMessage());});}});
+    void call(Map<String,String> data,Success success){ callUrl(BuildConfig.API_URL,data,success); }
+    void callUrl(String url,Map<String,String> data,Success success){
+        if(busy)return;busy=true; io.execute(()->{try{JSONObject j=requestUrl(url,data);runOnUiThread(()->{busy=false;if(j.optInt("ok")==1)success.run(j);else error(localizeError(j.optString("err",tr("Operation failed","Operación fallida"))));});}catch(Exception e){runOnUiThread(()->{busy=false;checkNetwork();error(tr("Connection error","Error de conexión")+": "+e.getMessage());});}});
     }
     JSONObject request(Map<String,String> data)throws Exception{
+        return requestUrl(BuildConfig.API_URL,data);
+    }
+    JSONObject requestUrl(String url,Map<String,String> data)throws Exception{
         StringBuilder body=new StringBuilder();for(Map.Entry<String,String>e:data.entrySet()){if(body.length()>0)body.append('&');body.append(URLEncoder.encode(e.getKey(),"UTF-8")).append('=').append(URLEncoder.encode(e.getValue(),"UTF-8"));}
-        HttpURLConnection c=(HttpURLConnection)new URL(BuildConfig.API_URL).openConnection();c.setConnectTimeout(9000);c.setReadTimeout(15000);c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("X-App-Token",BuildConfig.APP_TOKEN);c.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");try(OutputStream o=c.getOutputStream()){o.write(body.toString().getBytes(StandardCharsets.UTF_8));}
+        HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();c.setConnectTimeout(9000);c.setReadTimeout(45000);c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("X-App-Token",BuildConfig.APP_TOKEN);c.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");try(OutputStream o=c.getOutputStream()){o.write(body.toString().getBytes(StandardCharsets.UTF_8));}
         InputStream in=c.getResponseCode()<400?c.getInputStream():c.getErrorStream();String s=read(in);return new JSONObject(s);
     }
     String read(InputStream in)throws IOException{ByteArrayOutputStream o=new ByteArrayOutputStream();byte[]b=new byte[4096];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString("UTF-8");}
