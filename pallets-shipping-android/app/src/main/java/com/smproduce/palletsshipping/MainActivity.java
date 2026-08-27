@@ -38,6 +38,8 @@ public class MainActivity extends Activity {
     Button lang, back, next;
     EditText manual;
     BroadcastReceiver scannerReceiver, networkReceiver;
+    final StringBuilder keyScanBuffer = new StringBuilder();
+    long lastKeyAt = 0;
 
     String tr(String en, String es) { return spanish ? es : en; }
     int dp(int n){ return Math.round(n * getResources().getDisplayMetrics().density); }
@@ -45,6 +47,7 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b); queue = new QueueDb(this); buildShell(); registerReceivers(); configureDataWedge(); checkNetwork(); render();
     }
+    @Override protected void onResume(){ super.onResume(); configureDataWedge(); }
     @Override public void onDestroy(){ super.onDestroy(); try{unregisterReceiver(scannerReceiver);}catch(Exception ignored){} try{unregisterReceiver(networkReceiver);}catch(Exception ignored){} io.shutdownNow(); tone.release(); }
 
     void buildShell(){
@@ -143,7 +146,15 @@ public class MainActivity extends Activity {
     }
     String text(){return manual==null?"":manual.getText().toString().trim();}
 
-    void newPallet(){ if(!online){error(tr("Connect to create a new pallet","Conéctese para crear un pallet"));return;} call(map("action","pallet_new"),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");step=Step.PALLET_SCAN;render();}); }
+    void newPallet(){
+        if(!online){
+            palletId="OFFP-"+System.currentTimeMillis();
+            queue.add("CREATE_PALLET",palletId,palletId);
+            caseCount=0;step=Step.PALLET_SCAN;render();
+            ok(tr("Offline pallet created","Pallet sin conexión creado"));return;
+        }
+        call(map("action","pallet_new"),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");step=Step.PALLET_SCAN;render();});
+    }
     void resumePallet(String id){if(!online){error(tr("Connect to verify the partial pallet","Conéctese para verificar el pallet parcial"));return;}call(map("action","pallet_resume","pallet_id",id),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");step=Step.PALLET_SCAN;render();});}
     void newShipment(){if(busy)return;if(!online){error(tr("Connect to create a shipment","Conéctese para crear un envío"));return;}call(map("action","shipment_new"),j->{shipmentId=j.optString("shipment_id");step=Step.SHIP_ORDER;render();searchOrders("");});}
     void resumeShipment(String id){if(!online){error(tr("Connect to verify the shipment","Conéctese para verificar el envío"));return;}call(map("action","shipment_resume","shipment_id",id),j->{shipmentId=j.optString("shipment_id");palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");step=Step.SHIP_SCAN;render();});}
@@ -158,11 +169,11 @@ public class MainActivity extends Activity {
     }
     void scanCase(String code){
         if(!online){queue.add("CASE",palletId,code);caseCount++;ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();return;}
-        call(map("action","pallet_scan_case","pallet_id",palletId,"case_serial",code),j->{caseCount=j.optInt("cases_count",caseCount+1);ok(code);render();});
+        callScanOrQueue(map("action","pallet_scan_case","pallet_id",palletId,"case_serial",code),"CASE",palletId,code,j->{caseCount=j.optInt("cases_count",caseCount+1);ok(code);render();});
     }
     void scanPallet(String code){
         if(!online){queue.add("PALLET",shipmentId,code);palletCount++;ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();return;}
-        call(map("action","shipment_scan_pallet","shipment_id",shipmentId,"pallet_id",code),j->{palletCount=j.optInt("pallet_count",palletCount+1);shipmentCases=j.optInt("cases_count",shipmentCases);ok(code);render();if(selectedOrder!=null)checkPoAfterScan();});
+        callScanOrQueue(map("action","shipment_scan_pallet","shipment_id",shipmentId,"pallet_id",code),"PALLET",shipmentId,code,j->{palletCount=j.optInt("pallet_count",palletCount+1);shipmentCases=j.optInt("cases_count",shipmentCases);ok(code);render();if(selectedOrder!=null)checkPoAfterScan();});
     }
     void removeLast(boolean cases){
         if(!online){ if(queue.removeLast(cases?"CASE":"PALLET",cases?palletId:shipmentId)){if(cases)caseCount=Math.max(0,caseCount-1);else palletCount=Math.max(0,palletCount-1);render();}else error(tr("Nothing offline to remove","Nada sin conexión para eliminar")); return; }
@@ -241,6 +252,10 @@ public class MainActivity extends Activity {
     interface Success{void run(JSONObject j);}
     Map<String,String> map(String...v){Map<String,String>m=new LinkedHashMap<>();for(int i=0;i+1<v.length;i+=2)m.put(v[i],v[i+1]);return m;}
     void call(Map<String,String> data,Success success){ callUrl(BuildConfig.API_URL,data,success); }
+    void callScanOrQueue(Map<String,String> data,String type,String parent,String code,Success success){
+        if(busy)return;busy=true;io.execute(()->{try{JSONObject j=request(data);runOnUiThread(()->{busy=false;if(j.optInt("ok")==1)success.run(j);else error(localizeError(j.optString("err",tr("Operation failed","Operación fallida"))));});}
+        catch(Exception e){queue.add(type,parent,code);runOnUiThread(()->{busy=false;online=false;if(type.equals("CASE"))caseCount++;else palletCount++;network.setText(tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(Color.rgb(255,143,0));ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();});}});
+    }
     void callUrl(String url,Map<String,String> data,Success success){
         if(busy)return;busy=true; io.execute(()->{try{JSONObject j=requestUrl(url,data);runOnUiThread(()->{busy=false;if(j.optInt("ok")==1)success.run(j);else error(localizeError(j.optString("err",tr("Operation failed","Operación fallida"))));});}catch(Exception e){runOnUiThread(()->{busy=false;checkNetwork();error(tr("Connection error","Error de conexión")+": "+e.getMessage());});}});
     }
@@ -263,19 +278,34 @@ public class MainActivity extends Activity {
         IntentFilter sf=new IntentFilter();sf.addAction("com.smproduce.PALLETS_SHIPPING.SCAN");sf.addAction("com.symbol.datawedge.api.RESULT_ACTION");registerReceiver(scannerReceiver,sf,Build.VERSION.SDK_INT>=33?Context.RECEIVER_EXPORTED:0);
         networkReceiver=new BroadcastReceiver(){public void onReceive(Context c,Intent i){checkNetwork();}};registerReceiver(networkReceiver,new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
     }
+    @Override public boolean dispatchKeyEvent(KeyEvent event){
+        if(event.getAction()==KeyEvent.ACTION_DOWN){
+            long now=System.currentTimeMillis();if(now-lastKeyAt>250)keyScanBuffer.setLength(0);lastKeyAt=now;
+            int key=event.getKeyCode();
+            if(key==KeyEvent.KEYCODE_ENTER||key==KeyEvent.KEYCODE_TAB){String code=keyScanBuffer.toString().trim();keyScanBuffer.setLength(0);if(!code.isEmpty()){onScan(code);return true;}}
+            int unicode=event.getUnicodeChar();if(unicode>0&&!Character.isISOControl((char)unicode)){keyScanBuffer.append((char)unicode);return true;}
+        }
+        return super.dispatchKeyEvent(event);
+    }
     void configureDataWedge(){
         final String profile="SMProduce_PalletsShipping";
         Bundle app=new Bundle();app.putString("PACKAGE_NAME",getPackageName());app.putStringArray("ACTIVITY_LIST",new String[]{"*"});
-        Bundle barcode=new Bundle();barcode.putString("PLUGIN_NAME","BARCODE");barcode.putString("RESET_CONFIG","true");barcode.putBundle("PARAM_LIST",new Bundle());
+        Bundle barcodeParams=new Bundle();barcodeParams.putString("scanner_input_enabled","true");barcodeParams.putString("scanner_selection","auto");
+        Bundle barcode=new Bundle();barcode.putString("PLUGIN_NAME","BARCODE");barcode.putString("RESET_CONFIG","false");barcode.putBundle("PARAM_LIST",barcodeParams);
         Bundle base=new Bundle();base.putString("PROFILE_NAME",profile);base.putString("PROFILE_ENABLED","true");base.putString("CONFIG_MODE","CREATE_IF_NOT_EXIST");base.putParcelableArray("APP_LIST",new Bundle[]{app});base.putBundle("PLUGIN_CONFIG",barcode);
         Intent set=new Intent("com.symbol.datawedge.api.ACTION");set.putExtra("com.symbol.datawedge.api.SET_CONFIG",base);sendBroadcast(set);
+        Bundle association=new Bundle();association.putString("PROFILE_NAME",profile);association.putString("PROFILE_ENABLED","true");association.putString("CONFIG_MODE","UPDATE");association.putParcelableArray("APP_LIST",new Bundle[]{app});association.putBundle("PLUGIN_CONFIG",barcode);
+        Intent associate=new Intent("com.symbol.datawedge.api.ACTION");associate.putExtra("com.symbol.datawedge.api.SET_CONFIG",association);sendBroadcast(associate);
         Bundle params=new Bundle();params.putString("intent_output_enabled","true");params.putString("intent_action","com.smproduce.PALLETS_SHIPPING.SCAN");params.putString("intent_delivery","2");
         Bundle output=new Bundle();output.putString("PLUGIN_NAME","INTENT");output.putString("RESET_CONFIG","true");output.putBundle("PARAM_LIST",params);
         Bundle outCfg=new Bundle();outCfg.putString("PROFILE_NAME",profile);outCfg.putString("PROFILE_ENABLED","true");outCfg.putString("CONFIG_MODE","UPDATE");outCfg.putBundle("PLUGIN_CONFIG",output);
         Intent setOut=new Intent("com.symbol.datawedge.api.ACTION");setOut.putExtra("com.symbol.datawedge.api.SET_CONFIG",outCfg);sendBroadcast(setOut);
+        Bundle keyParams=new Bundle();keyParams.putString("keystroke_output_enabled","false");Bundle keyOut=new Bundle();keyOut.putString("PLUGIN_NAME","KEYSTROKE");keyOut.putString("RESET_CONFIG","true");keyOut.putBundle("PARAM_LIST",keyParams);Bundle keyCfg=new Bundle();keyCfg.putString("PROFILE_NAME",profile);keyCfg.putString("PROFILE_ENABLED","true");keyCfg.putString("CONFIG_MODE","UPDATE");keyCfg.putBundle("PLUGIN_CONFIG",keyOut);Intent setKey=new Intent("com.symbol.datawedge.api.ACTION");setKey.putExtra("com.symbol.datawedge.api.SET_CONFIG",keyCfg);sendBroadcast(setKey);
     }
     void checkNetwork(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);boolean was=online;online=cap!=null&&cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);network.setText(online?tr("● ONLINE","● EN LÍNEA"):tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(online?Color.rgb(102,187,106):Color.rgb(255,143,0));if(online&&!was)syncQueue();}
-    void syncQueue(){io.execute(()->{List<QueueDb.Item>items=queue.all();int done=0;for(QueueDb.Item x:items){try{Map<String,String>m=x.type.equals("CASE")?map("action","pallet_scan_case","pallet_id",x.parent,"case_serial",x.code):map("action","shipment_scan_pallet","shipment_id",x.parent,"pallet_id",x.code);JSONObject j=request(m);if(j.optInt("ok")==1||j.optString("err").toLowerCase().contains("already")){queue.remove(x.id);done++;}else break;}catch(Exception e){break;}}int d=done;if(d>0)runOnUiThread(()->{Toast.makeText(this,tr("Synchronized ","Sincronizados ")+d,Toast.LENGTH_LONG).show();refreshCurrent();});});}
+    void syncQueue(){io.execute(()->{List<QueueDb.Item>items=queue.all();int done=0;for(QueueDb.Item x:items){try{
+            if(x.type.equals("CREATE_PALLET")){JSONObject j=request(map("action","pallet_new"));if(j.optInt("ok")!=1)break;String real=j.optString("pallet_id");queue.replaceParent(x.parent,real);queue.remove(x.id);if(palletId.equals(x.parent))palletId=real;done++;continue;}
+            Map<String,String>m=x.type.equals("CASE")?map("action","pallet_scan_case","pallet_id",x.parent,"case_serial",x.code):map("action","shipment_scan_pallet","shipment_id",x.parent,"pallet_id",x.code);JSONObject j=request(m);if(j.optInt("ok")==1||j.optString("err").toLowerCase().contains("already")){queue.remove(x.id);done++;}else break;}catch(Exception e){break;}}int d=done;if(d>0)runOnUiThread(()->{Toast.makeText(this,tr("Synchronized ","Sincronizados ")+d,Toast.LENGTH_LONG).show();refreshCurrent();});});}
     void refreshCurrent(){if(!online)return;if(!palletId.isEmpty())call(map("action","pallet_status","pallet_id",palletId),j->{caseCount=j.optInt("cases_count");render();});else if(!shipmentId.isEmpty())call(map("action","shipment_resume","shipment_id",shipmentId),j->{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");render();if(selectedOrder!=null)checkPoAfterScan();});}
 
     static class QueueDb extends SQLiteOpenHelper{
@@ -284,6 +314,7 @@ public class MainActivity extends Activity {
         void add(String t,String p,String c){ContentValues v=new ContentValues();v.put("type",t);v.put("parent",p);v.put("code",c);v.put("created",System.currentTimeMillis());getWritableDatabase().insertWithOnConflict("queue",null,v,SQLiteDatabase.CONFLICT_IGNORE);}
         List<Item> all(){ArrayList<Item>l=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT id,type,parent,code FROM queue ORDER BY id",null)){while(c.moveToNext())l.add(new Item(c.getLong(0),c.getString(1),c.getString(2),c.getString(3)));}return l;}
         void remove(long id){getWritableDatabase().delete("queue","id=?",new String[]{String.valueOf(id)});}int countFor(String p){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM queue WHERE parent=?",new String[]{p})){return c.moveToFirst()?c.getInt(0):0;}}
+        void replaceParent(String oldParent,String newParent){ContentValues v=new ContentValues();v.put("parent",newParent);getWritableDatabase().update("queue",v,"parent=?",new String[]{oldParent});}
         boolean removeLast(String t,String p){try(Cursor c=getReadableDatabase().rawQuery("SELECT id FROM queue WHERE type=? AND parent=? ORDER BY id DESC LIMIT 1",new String[]{t,p})){if(!c.moveToFirst())return false;remove(c.getLong(0));return true;}}
     }
 }
