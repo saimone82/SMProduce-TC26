@@ -41,7 +41,7 @@ public class MainActivity extends Activity {
     int dp(int n){ return Math.round(n * getResources().getDisplayMetrics().density); }
 
     @Override public void onCreate(Bundle b) {
-        super.onCreate(b); queue = new QueueDb(this); buildShell(); registerReceivers(); checkNetwork(); render();
+        super.onCreate(b); queue = new QueueDb(this); buildShell(); registerReceivers(); configureDataWedge(); checkNetwork(); render();
     }
     @Override public void onDestroy(){ super.onDestroy(); try{unregisterReceiver(scannerReceiver);}catch(Exception ignored){} try{unregisterReceiver(networkReceiver);}catch(Exception ignored){} io.shutdownNow(); tone.release(); }
 
@@ -198,6 +198,17 @@ public class MainActivity extends Activity {
         scannerReceiver=new BroadcastReceiver(){public void onReceive(Context c,Intent i){String code=i.getStringExtra("com.symbol.datawedge.data_string");if(code==null)code=i.getStringExtra("com.motorolasolutions.emdk.datawedge.data_string");onScan(code);}};
         IntentFilter sf=new IntentFilter();sf.addAction("com.smproduce.PALLETS_SHIPPING.SCAN");sf.addAction("com.symbol.datawedge.api.RESULT_ACTION");registerReceiver(scannerReceiver,sf,Build.VERSION.SDK_INT>=33?Context.RECEIVER_EXPORTED:0);
         networkReceiver=new BroadcastReceiver(){public void onReceive(Context c,Intent i){checkNetwork();}};registerReceiver(networkReceiver,new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+    }
+    void configureDataWedge(){
+        final String profile="SMProduce_PalletsShipping";
+        Bundle app=new Bundle();app.putString("PACKAGE_NAME",getPackageName());app.putStringArray("ACTIVITY_LIST",new String[]{"*"});
+        Bundle barcode=new Bundle();barcode.putString("PLUGIN_NAME","BARCODE");barcode.putString("RESET_CONFIG","true");barcode.putBundle("PARAM_LIST",new Bundle());
+        Bundle base=new Bundle();base.putString("PROFILE_NAME",profile);base.putString("PROFILE_ENABLED","true");base.putString("CONFIG_MODE","CREATE_IF_NOT_EXIST");base.putParcelableArray("APP_LIST",new Bundle[]{app});base.putBundle("PLUGIN_CONFIG",barcode);
+        Intent set=new Intent("com.symbol.datawedge.api.ACTION");set.putExtra("com.symbol.datawedge.api.SET_CONFIG",base);sendBroadcast(set);
+        Bundle params=new Bundle();params.putString("intent_output_enabled","true");params.putString("intent_action","com.smproduce.PALLETS_SHIPPING.SCAN");params.putString("intent_delivery","2");
+        Bundle output=new Bundle();output.putString("PLUGIN_NAME","INTENT");output.putString("RESET_CONFIG","true");output.putBundle("PARAM_LIST",params);
+        Bundle outCfg=new Bundle();outCfg.putString("PROFILE_NAME",profile);outCfg.putString("PROFILE_ENABLED","true");outCfg.putString("CONFIG_MODE","UPDATE");outCfg.putBundle("PLUGIN_CONFIG",output);
+        Intent setOut=new Intent("com.symbol.datawedge.api.ACTION");setOut.putExtra("com.symbol.datawedge.api.SET_CONFIG",outCfg);sendBroadcast(setOut);
     }
     void checkNetwork(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);boolean was=online;online=cap!=null&&cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);network.setText(online?tr("● ONLINE","● EN LÍNEA"):tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(online?Color.rgb(102,187,106):Color.rgb(255,143,0));if(online&&!was)syncQueue();}
     void syncQueue(){io.execute(()->{List<QueueDb.Item>items=queue.all();int done=0;for(QueueDb.Item x:items){try{Map<String,String>m=x.type.equals("CASE")?map("action","pallet_scan_case","pallet_id",x.parent,"case_serial",x.code):map("action","shipment_scan_pallet","shipment_id",x.parent,"pallet_id",x.code);JSONObject j=request(m);if(j.optInt("ok")==1||j.optString("err").toLowerCase().contains("already")){queue.remove(x.id);done++;}else break;}catch(Exception e){break;}}int d=done;if(d>0)runOnUiThread(()->{Toast.makeText(this,tr("Synchronized ","Sincronizados ")+d,Toast.LENGTH_LONG).show();refreshCurrent();});});}
