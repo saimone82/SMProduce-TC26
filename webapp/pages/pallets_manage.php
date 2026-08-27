@@ -222,7 +222,8 @@ if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || !empty($_POST['ajax'])) {
         if ($dbx instanceof mysqli) $printerId=(int)(ppr_get_settings($dbx)['label_printer_id']??0);
         if ($printerId === 0) { echo json_encode(['ok'=>0,'err'=>'Select Pallet Label Printer at the top of this page']); exit; }
         $ok = smp_tc26_print_pallet_label($dbx, $pid, $printerId);
-        echo json_encode(['ok'=>$ok?1:0,'msg'=>$ok?'Label sent to saved Zebra printer':'Print failed — check printer']); exit;
+        $detail=trim((string)($GLOBALS['smp_pallet_print_error']??''));
+        echo json_encode(['ok'=>$ok?1:0,'msg'=>$ok?'Label sent to saved Zebra printer':($detail!==''?$detail:'Print failed — unknown reason')]); exit;
     }
 
     echo json_encode(['ok'=>0,'err'=>'Unknown action']); exit;
