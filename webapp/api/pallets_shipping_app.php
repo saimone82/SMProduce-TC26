@@ -112,9 +112,12 @@ try {
             $detail['duplicate_ignored'] = 1;
             ps_out($detail);
         }
-        if ($existing) ps_out(['ok'=>0, 'err'=>'Case already belongs to pallet '.$existing['pallet_id']]);
+        if ($existing) ps_out(['ok'=>0, 'err'=>'Case '.$serial.' already belongs to pallet '.$existing['pallet_id']]);
         $res = smp_tc26_add_case_to_pallet($dbx, $pid, $serial, $uid);
-        if (empty($res['ok'])) ps_out($res);
+        if (empty($res['ok'])) {
+            $res['scanned_code']=$serial;
+            ps_out($res);
+        }
         ps_out(ps_pallet_detail($dbx, $pid));
     }
     if ($action === 'pallet_remove_last') {
