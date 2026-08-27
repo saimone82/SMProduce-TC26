@@ -87,8 +87,8 @@ public class MainActivity extends Activity {
             case PALLET_RESUME: scanQuestion(tr("Scan the partial pallet label","Escanee la etiqueta del pallet parcial"),tr("The pallet must have PARTIAL status","El pallet debe tener estado PARCIAL")); break;
             case PALLET_SCAN: scanScreen(true); break;
             case PALLET_FINISH: heading(tr("What would you like to do?","¿Qué desea hacer?"),palletId+" · "+caseCount+" "+tr("cases","cajas"));
-                choice("Save as Partial","Guardar como parcial",v->finishPallet(false));
-                choice("Close and Print","Cerrar e imprimir",v->finishPallet(true)); break;
+                choice("Close as Complete","Cerrar como completo",v->finishPallet(true));
+                choice("Close as Partial","Cerrar como parcial",v->finishPallet(false)); break;
             case SHIP_MODE: heading(tr("Shipping","Envíos"),tr("What would you like to do?","¿Qué desea hacer?"));
                 choice("New Shipment","Nuevo envío",v->newShipment());
                 choice("Resume Shipment","Continuar envío",v->{step=Step.SHIP_RESUME;render();}); break;
@@ -166,7 +166,7 @@ public class MainActivity extends Activity {
         if(!online){ if(queue.removeLast(cases?"CASE":"PALLET",cases?palletId:shipmentId)){if(cases)caseCount=Math.max(0,caseCount-1);else palletCount=Math.max(0,palletCount-1);render();}else error(tr("Nothing offline to remove","Nada sin conexión para eliminar")); return; }
         call(map("action",cases?"pallet_remove_last":"shipment_remove_last",cases?"pallet_id":"shipment_id",cases?palletId:shipmentId),j->{if(cases)caseCount=j.optInt("cases_count");else{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");}render();});
     }
-    void finishPallet(boolean close){ if(!online||queue.countFor(palletId)>0){error(tr("Wait for synchronization before finishing","Espere la sincronización antes de finalizar"));return;}call(map("action",close?"pallet_close":"pallet_partial","pallet_id",palletId),j->done(close?tr("Pallet closed and sent to print","Pallet cerrado y enviado a imprimir"):tr("Partial pallet saved","Pallet parcial guardado"))); }
+    void finishPallet(boolean complete){ if(!online||queue.countFor(palletId)>0){error(tr("Wait for synchronization before finishing","Espere la sincronización antes de finalizar"));return;}call(map("action",complete?"pallet_close":"pallet_partial","pallet_id",palletId),j->done(complete?tr("Pallet closed as complete and sent to print","Pallet cerrado como completo y enviado a imprimir"):tr("Pallet closed as partial and sent to print","Pallet cerrado como parcial y enviado a imprimir"))); }
     void closeShipment(){if(!online||queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before closing","Espere la sincronización antes de cerrar"));return;}call(map("action","shipment_close","shipment_id",shipmentId),j->done(tr("Shipment closed","Envío cerrado")));}
     void done(String msg){step=Step.DONE;render();subtitle.setText(msg);}
     void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;step=Step.HOME;render();}
