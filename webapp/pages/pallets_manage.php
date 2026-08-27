@@ -8,8 +8,8 @@ if (!isset($_SESSION['user']) && empty($_SESSION['logged_in'])) {
 }
 
 require_once __DIR__.'/../includes/db.php';
-require_once __DIR__.'/../includes/pallet_report.php';
 require_once __DIR__.'/../includes/print_engine.php';
+require_once __DIR__.'/../includes/pallet_report.php';
 
 $dbx = $conn; // Pallets Manage uses mysqli consistently (ppr_* helpers are mysqli-based)
 smp_ensure_tc26_tables($dbx);
