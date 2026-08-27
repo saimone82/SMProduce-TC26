@@ -30,6 +30,9 @@ public class MainActivity extends Activity {
     JSONObject selectedOrder;
     boolean shipmentMismatch = false;
     String shipmentCompareMessage = "";
+    String scanErrorMessage = "";
+    boolean casesExpanded = false;
+    final ArrayList<String> scannedCases = new ArrayList<>();
     final ExecutorService io = Executors.newSingleThreadExecutor();
     final ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90);
     QueueDb queue;
@@ -118,8 +121,19 @@ public class MainActivity extends Activity {
         counter=tv(cases?caseCount+" "+tr("CASES","CAJAS"):palletCount+" "+tr("PALLETS","PALLETS"),34,Color.rgb(102,187,106));counter.setGravity(Gravity.CENTER);counter.setTypeface(null,1);body.addView(counter,new LinearLayout.LayoutParams(-1,-2));
         String scanStatus=tr("Ready to scan","Listo para escanear")+(online?"":"\n"+tr("Scans will be synchronized automatically","Las lecturas se sincronizarán automáticamente"));
         if(!cases&&!shipmentCompareMessage.isEmpty())scanStatus+="\n\n"+shipmentCompareMessage;
-        detail=tv(scanStatus,16,shipmentMismatch?Color.rgb(255,143,0):Color.WHITE);detail.setGravity(Gravity.CENTER);body.addView(detail,new LinearLayout.LayoutParams(-1,-2));
+        if(cases&&!scanErrorMessage.isEmpty())scanStatus+="\n\n"+scanErrorMessage;
+        detail=tv(scanStatus,16,cases&&!scanErrorMessage.isEmpty()?Color.rgb(239,68,68):(shipmentMismatch?Color.rgb(255,143,0):Color.WHITE));detail.setGravity(Gravity.CENTER);body.addView(detail,new LinearLayout.LayoutParams(-1,-2));
         addSpace(16);Button remove=choice("Remove Last","Eliminar último",v->removeLast(cases));remove.setBackgroundColor(Color.rgb(198,40,40));
+        if(cases){
+            Button toggle=choice(casesExpanded?"Hide scanned cases":"Scanned cases",casesExpanded?"Ocultar cajas escaneadas":"Cajas escaneadas",v->{casesExpanded=!casesExpanded;render();});
+            toggle.setText(toggle.getText()+" ("+scannedCases.size()+")");toggle.setBackgroundColor(Color.rgb(52,65,85));
+            if(casesExpanded){
+                LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);list.setPadding(dp(14),dp(8),dp(14),dp(8));list.setBackgroundColor(Color.rgb(19,32,51));
+                if(scannedCases.isEmpty())list.addView(tv(tr("No cases scanned","No hay cajas escaneadas"),14,Color.LTGRAY));
+                else for(int i=scannedCases.size()-1;i>=0;i--)list.addView(tv("• "+scannedCases.get(i),15,Color.WHITE));
+                body.addView(list,new LinearLayout.LayoutParams(-1,-2));addSpace(10);
+            }
+        }
         next.setVisibility(View.VISIBLE);next.setText(tr("Finish","Finalizar"));
     }
 
@@ -152,12 +166,12 @@ public class MainActivity extends Activity {
         if(!online){
             palletId="OFFP-"+System.currentTimeMillis();
             queue.add("CREATE_PALLET",palletId,palletId);
-            caseCount=0;step=Step.PALLET_SCAN;render();
+            caseCount=0;scannedCases.clear();casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();
             ok(tr("Offline pallet created","Pallet sin conexión creado"));return;
         }
-        call(map("action","pallet_new"),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");step=Step.PALLET_SCAN;render();});
+        call(map("action","pallet_new"),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");scannedCases.clear();casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();});
     }
-    void resumePallet(String id){if(!online){error(tr("Connect to verify the partial pallet","Conéctese para verificar el pallet parcial"));return;}call(map("action","pallet_resume","pallet_id",id),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");step=Step.PALLET_SCAN;render();});}
+    void resumePallet(String id){if(!online){error(tr("Connect to verify the partial pallet","Conéctese para verificar el pallet parcial"));return;}call(map("action","pallet_resume","pallet_id",id),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");loadCases(j);casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();});}
     void newShipment(){if(busy)return;if(!online){error(tr("Connect to create a shipment","Conéctese para crear un envío"));return;}call(map("action","shipment_new"),j->{shipmentId=j.optString("shipment_id");step=Step.SHIP_ORDER;render();searchOrders("");});}
     void resumeShipment(String id){if(!online){error(tr("Connect to verify the shipment","Conéctese para verificar el envío"));return;}call(map("action","shipment_resume","shipment_id",id),j->{shipmentId=j.optString("shipment_id");palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");step=Step.SHIP_SCAN;render();});}
 
@@ -176,16 +190,17 @@ public class MainActivity extends Activity {
         if(manual!=null)manual.setText(code);
     }
     void scanCase(String code){
-        if(!online){queue.add("CASE",palletId,code);caseCount++;ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();return;}
-        callScanOrQueue(map("action","pallet_scan_case","pallet_id",palletId,"case_serial",code),"CASE",palletId,code,j->{caseCount=j.optInt("cases_count",caseCount+1);ok(code);render();});
+        scanErrorMessage="";
+        if(!online){queue.add("CASE",palletId,code);caseCount++;if(!scannedCases.contains(code))scannedCases.add(code);ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();return;}
+        callScanOrQueue(map("action","pallet_scan_case","pallet_id",palletId,"case_serial",code),"CASE",palletId,code,j->{caseCount=j.optInt("cases_count",caseCount+1);loadCases(j);ok(code);render();});
     }
     void scanPallet(String code){
         if(!online){queue.add("PALLET",shipmentId,code);palletCount++;ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();return;}
         callScanOrQueue(map("action","shipment_scan_pallet","shipment_id",shipmentId,"pallet_id",code),"PALLET",shipmentId,code,j->{palletCount=j.optInt("pallet_count",palletCount+1);shipmentCases=j.optInt("cases_count",shipmentCases);ok(code);render();if(selectedOrder!=null)checkPoAfterScan();});
     }
     void removeLast(boolean cases){
-        if(!online){ if(queue.removeLast(cases?"CASE":"PALLET",cases?palletId:shipmentId)){if(cases)caseCount=Math.max(0,caseCount-1);else palletCount=Math.max(0,palletCount-1);render();}else error(tr("Nothing offline to remove","Nada sin conexión para eliminar")); return; }
-        call(map("action",cases?"pallet_remove_last":"shipment_remove_last",cases?"pallet_id":"shipment_id",cases?palletId:shipmentId),j->{if(cases)caseCount=j.optInt("cases_count");else{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");shipmentMismatch=false;shipmentCompareMessage="";}render();if(!cases&&selectedOrder!=null)checkPoAfterScan();});
+        if(!online){ if(queue.removeLast(cases?"CASE":"PALLET",cases?palletId:shipmentId)){if(cases){caseCount=Math.max(0,caseCount-1);if(!scannedCases.isEmpty())scannedCases.remove(scannedCases.size()-1);scanErrorMessage="";}else palletCount=Math.max(0,palletCount-1);render();}else error(tr("Nothing offline to remove","Nada sin conexión para eliminar")); return; }
+        call(map("action",cases?"pallet_remove_last":"shipment_remove_last",cases?"pallet_id":"shipment_id",cases?palletId:shipmentId),j->{if(cases){caseCount=j.optInt("cases_count");if(!scannedCases.isEmpty())scannedCases.remove(scannedCases.size()-1);scanErrorMessage="";}else{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");shipmentMismatch=false;shipmentCompareMessage="";}render();if(!cases&&selectedOrder!=null)checkPoAfterScan();});
     }
     void finishPallet(boolean complete){ if(!online||queue.countFor(palletId)>0){error(tr("Wait for synchronization before finishing","Espere la sincronización antes de finalizar"));return;}call(map("action",complete?"pallet_close":"pallet_partial","pallet_id",palletId),j->done(complete?tr("Pallet closed as complete and sent to print","Pallet cerrado como completo y enviado a imprimir"):tr("Pallet closed as partial and sent to print","Pallet cerrado como parcial y enviado a imprimir"))); }
     void closeShipment(){
@@ -210,7 +225,7 @@ public class MainActivity extends Activity {
         });
     }
     void done(String msg){step=Step.DONE;render();subtitle.setText(msg);}
-    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;shipmentMismatch=false;shipmentCompareMessage="";step=Step.HOME;render();}
+    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;shipmentMismatch=false;shipmentCompareMessage="";scanErrorMessage="";casesExpanded=false;scannedCases.clear();step=Step.HOME;render();}
 
     void searchOrders(String q){ if(!online){error(tr("Order search requires connection","La búsqueda requiere conexión"));return;}call(map("action","order_search","q",q),j->showOrders(j.optJSONArray("orders"))); }
     void requestSkipPassword(){
@@ -258,10 +273,11 @@ public class MainActivity extends Activity {
     }
 
     interface Success{void run(JSONObject j);}
+    void loadCases(JSONObject j){JSONArray a=j.optJSONArray("cases");if(a==null)return;scannedCases.clear();for(int i=a.length()-1;i>=0;i--){JSONObject x=a.optJSONObject(i);if(x!=null){String s=x.optString("case_serial");if(!s.isEmpty())scannedCases.add(s);}}}
     Map<String,String> map(String...v){Map<String,String>m=new LinkedHashMap<>();for(int i=0;i+1<v.length;i+=2)m.put(v[i],v[i+1]);return m;}
     void call(Map<String,String> data,Success success){ callUrl(BuildConfig.API_URL,data,success); }
     void callScanOrQueue(Map<String,String> data,String type,String parent,String code,Success success){
-        if(busy)return;busy=true;io.execute(()->{try{JSONObject j=request(data);runOnUiThread(()->{busy=false;if(j.optInt("ok")==1)success.run(j);else error(localizeError(j.optString("err",tr("Operation failed","Operación fallida"))));});}
+        if(busy)return;busy=true;io.execute(()->{try{JSONObject j=request(data);runOnUiThread(()->{busy=false;if(j.optInt("ok")==1)success.run(j);else{String msg=localizeError(j.optString("err",tr("Operation failed","Operación fallida")));String low=msg.toLowerCase();if(low.contains("already scanned")||low.contains("ya fue escaneada")||low.contains("ya escaneada")){scanErrorMessage=tr("CASE ALREADY SCANNED","CAJA YA ESCANEADA");tone.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT,350);render();}else error(msg);}});}
         catch(Exception e){queue.add(type,parent,code);runOnUiThread(()->{busy=false;online=false;if(type.equals("CASE"))caseCount++;else palletCount++;network.setText(tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(Color.rgb(255,143,0));ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();});}});
     }
     void callUrl(String url,Map<String,String> data,Success success){
