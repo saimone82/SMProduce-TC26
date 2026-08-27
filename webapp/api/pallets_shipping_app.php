@@ -110,12 +110,12 @@ function ps_shipment_detail($db, string $sid): array {
 }
 
 try {
-    if ($action === 'ping') ps_out(['ok'=>1, 'api_version'=>'1.4.1', 'server_time'=>date(DATE_ATOM)]);
+    if ($action === 'ping') ps_out(['ok'=>1, 'api_version'=>'1.4.2', 'server_time'=>date(DATE_ATOM)]);
 
     if ($action === 'case_check') {
         $serial = ps_normalize_scan_code((string)($input['case_serial'] ?? ''));
         $row = ps_direct_casecode_lookup($dbx, $serial);
-        ps_out(['ok'=>$row?1:0, 'api_version'=>'1.4.1', 'scanned_code'=>$serial,
+        ps_out(['ok'=>$row?1:0, 'api_version'=>'1.4.2', 'scanned_code'=>$serial,
             'found'=>$row?1:0, 'sku'=>$row['SKU']??$row['sku']??null,
             'variety'=>$row['variety']??null, 'grower'=>$row['grower']??null,
             'err'=>$row?null:'Case not found in casecodes']);
@@ -182,12 +182,16 @@ try {
     if ($action === 'pallet_partial') {
         $pid = trim((string)($input['pallet_id'] ?? ''));
         $res = smp_tc26_partial_pallet($dbx, $pid, $uid, 0);
+        $res['label_printed'] = !empty($res['ok']) && smp_tc26_print_pallet_label($dbx, $pid, 0, true) ? 1 : 0;
+        if (!empty($res['ok']) && empty($res['label_printed'])) $res['print_warning']='Pallet saved, but label was not sent. Check the printer selected in Pallets Manage.';
         if (!empty($res['ok']) && $dbx instanceof mysqli) $res['report'] = ppr_print_report($dbx, $pid);
         ps_out($res);
     }
     if ($action === 'pallet_close') {
         $pid = trim((string)($input['pallet_id'] ?? ''));
         $res = smp_tc26_close_pallet($dbx, $pid, $uid, 0);
+        $res['label_printed'] = !empty($res['ok']) && smp_tc26_print_pallet_label($dbx, $pid, 0, false) ? 1 : 0;
+        if (!empty($res['ok']) && empty($res['label_printed'])) $res['print_warning']='Pallet closed, but label was not sent. Check the printer selected in Pallets Manage.';
         if (!empty($res['ok']) && $dbx instanceof mysqli) $res['report'] = ppr_print_report($dbx, $pid);
         ps_out($res);
     }
