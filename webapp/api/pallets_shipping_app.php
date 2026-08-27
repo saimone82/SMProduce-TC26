@@ -19,6 +19,24 @@ function ps_out(array $data, int $status = 200): never {
     exit;
 }
 
+function ps_normalize_scan_code(string $raw): string {
+    $code = strtoupper(trim(preg_replace('/[\x00-\x20\x7F]+/', '', $raw) ?? $raw));
+    // Zebra/DataWedge may concatenate the same barcode twice.
+    if (strlen($code) > 0 && strlen($code) % 2 === 0) {
+        $half = intdiv(strlen($code), 2);
+        if (substr($code, 0, $half) === substr($code, $half)) {
+            $code = substr($code, 0, $half);
+        }
+    }
+    // Case labels use U followed by seven digits. If the scanner appended
+    // framing data, retain the single valid case serial.
+    if (preg_match_all('/U\d{7}/', $code, $m) && !empty($m[0])) {
+        $unique = array_values(array_unique($m[0]));
+        if (count($unique) === 1) return $unique[0];
+    }
+    return $code;
+}
+
 $cfg = require __DIR__ . '/../config/pallets_shipping_app.php';
 if (empty($cfg['enabled'])) ps_out(['ok'=>0, 'err'=>'App API disabled'], 503);
 $provided = trim((string)($_SERVER['HTTP_X_APP_TOKEN'] ?? $_POST['token'] ?? ''));
@@ -84,7 +102,7 @@ try {
     }
     if ($action === 'pallet_scan_case') {
         $pid = trim((string)($input['pallet_id'] ?? ''));
-        $serial = trim((string)($input['case_serial'] ?? ''));
+        $serial = ps_normalize_scan_code((string)($input['case_serial'] ?? ''));
         $existing = smp_db_fetch_one($dbx,
             "SELECT pallet_id FROM pallet_cases WHERE case_serial=? LIMIT 1", [$serial]);
         // Idempotent scan: Zebra/DataWedge can occasionally deliver the same
@@ -100,7 +118,7 @@ try {
         ps_out(ps_pallet_detail($dbx, $pid));
     }
     if ($action === 'pallet_remove_last') {
-        $pid = trim((string)($input['pallet_id'] ?? ''));
+        $pid = ps_normalize_scan_code((string)($input['pallet_id'] ?? ''));
         $row = smp_db_fetch_one($dbx, "SELECT id FROM pallet_cases WHERE pallet_id=? ORDER BY id DESC LIMIT 1", [$pid]);
         if (!$row) ps_out(['ok'=>0, 'err'=>'No cases to remove']);
         $res = smp_tc26_remove_case($dbx, (int)$row['id'], $pid);
@@ -157,7 +175,7 @@ try {
     }
     if ($action === 'shipment_scan_pallet') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        $pid = trim((string)($input['pallet_id'] ?? ''));
+        $pid = ps_normalize_scan_code((string)($input['pallet_id'] ?? ''));
         $existing = smp_db_fetch_one($dbx,
             "SELECT id FROM shipment_pallets WHERE shipment_id=? AND pallet_id=? LIMIT 1", [$sid,$pid]);
         if ($existing) {
