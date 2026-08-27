@@ -863,6 +863,7 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
     function smp_tc26_print_pallet_label(
         $db,string $palletId,int $printerId=0,bool $isPartial=false
     ): bool {
+        $GLOBALS['smp_pallet_print_error']='';
         try {
             /* ── Pallet header ───────────────────────────────────────────── */
             $pal=smp_db_fetch_one($db,
@@ -872,7 +873,7 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
                  WHERE pallet_id=? LIMIT 1",
                 [$palletId]
             );
-            if(!$pal)return false;
+            if(!$pal){$GLOBALS['smp_pallet_print_error']='Pallet '.$palletId.' not found';return false;}
 
             // Ensure legacy serial-only rows contribute their real composition.
             smp_repair_pallet_case_metadata($db,$palletId);
@@ -934,7 +935,11 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
             }
             if($printerId>0)$printer=smp_get_printer_by_id($printerId);
             if(!$printer)$printer=smp_get_default_active_printer();
-            if(!$printer||empty($printer['printer_ip']))return false;
+            if(!$printer){$GLOBALS['smp_pallet_print_error']='Selected printer is not active or no longer exists';return false;}
+            $printerIp=trim((string)($printer['printer_ip']??$printer['ip']??''));
+            $printerPort=(int)($printer['printer_port']??$printer['port']??9100);
+            if($printerPort<=0)$printerPort=9100;
+            if($printerIp===''){$GLOBALS['smp_pallet_print_error']='Selected printer has no IP address';return false;}
 
             /* ── Final active pallet template ───────────────────────────── */
             $template=le_db_fetch_one(
@@ -942,7 +947,7 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
                  WHERE label_type='pallet' AND is_active=1
                  ORDER BY updated_at DESC,id DESC LIMIT 1",[]
             );
-            if(!$template)return false;
+            if(!$template){$GLOBALS['smp_pallet_print_error']='No active PALLET label template found';return false;}
 
             $data=[
                 'pallet_id'=>$palletId,
@@ -988,15 +993,21 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
             if($targetDpi<=0)$targetDpi=300;
 
             $zpl=trim((string)le_render_template($template,$data,$targetDpi));
-            if($zpl==='')return false;
+            if($zpl===''){$GLOBALS['smp_pallet_print_error']='The PALLET template generated empty ZPL';return false;}
 
             $res=le_send_to_printer(
-                (string)$printer['printer_ip'],
-                (int)($printer['printer_port']??9100),
+                $printerIp,
+                $printerPort,
                 $zpl
             );
-            return is_array($res)?!empty($res['ok']):(bool)$res;
+            $ok=is_array($res)?!empty($res['ok']):(bool)$res;
+            if(!$ok){
+                $detail=is_array($res)?trim((string)($res['error']??$res['err']??$res['message']??'')):'';
+                $GLOBALS['smp_pallet_print_error']='Zebra send failed at '.$printerIp.':'.$printerPort.($detail!==''?' — '.$detail:'');
+            }
+            return $ok;
         }catch(Throwable $e){
+            $GLOBALS['smp_pallet_print_error']='Pallet label error: '.$e->getMessage();
             return false;
         }
     }
