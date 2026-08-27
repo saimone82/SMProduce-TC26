@@ -40,6 +40,8 @@ public class MainActivity extends Activity {
     BroadcastReceiver scannerReceiver, networkReceiver;
     final StringBuilder keyScanBuffer = new StringBuilder();
     long lastKeyAt = 0;
+    String lastScanCode = "";
+    long lastScanAt = 0;
 
     String tr(String en, String es) { return spanish ? es : en; }
     int dp(int n){ return Math.round(n * getResources().getDisplayMetrics().density); }
@@ -161,6 +163,12 @@ public class MainActivity extends Activity {
 
     void onScan(String raw){
         String code=raw==null?"":raw.trim();if(code.isEmpty()||busy)return;
+        // Some Zebra/DataWedge configurations deliver the same scan through
+        // both Intent Output and Keystroke Output. Accept it only once.
+        if(code.length()%2==0){String a=code.substring(0,code.length()/2);String b=code.substring(code.length()/2);if(a.equals(b))code=a;}
+        long now=System.currentTimeMillis();
+        if(code.equals(lastScanCode)&&now-lastScanAt<1500)return;
+        lastScanCode=code;lastScanAt=now;
         if(step==Step.PALLET_RESUME){manual.setText(code);resumePallet(code);return;}
         if(step==Step.SHIP_RESUME){manual.setText(code);resumeShipment(code);return;}
         if(step==Step.PALLET_SCAN){scanCase(code);return;}
