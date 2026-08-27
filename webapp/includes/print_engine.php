@@ -609,7 +609,7 @@ if (!function_exists('smp_lookup_casecode_by_scan')) {
         $configured = preg_replace('/[^A-Za-z0-9_]/','',smp_get_calc_setting($db,'case_lookup_key','serial'));
         if($serial==='') return null;
         $tables=array_values(array_unique(array_filter([$configuredTable,'casecodes'])));
-        $keys=array_values(array_unique(array_filter([$configured,'serial','id','Serial','SerialFormatted','serial_formatted'])));
+        $keys=array_values(array_unique(array_filter([$configured,'serial','code','barcode','case_serial','id','Serial','SerialFormatted','serial_formatted'])));
         foreach($tables as $tbl){
             foreach($keys as $key){
                 try{
@@ -617,6 +617,17 @@ if (!function_exists('smp_lookup_casecode_by_scan')) {
                     if($row) return $row;
                 }catch(Throwable $e){ /* table/column not present */ }
             }
+        }
+        // Some production flows record a scanned case before or without all
+        // descriptive casecodes fields. It is still a known case if it exists
+        // in one of the production scan ledgers.
+        foreach ([['scanner_scans','serial'],['barcode_scans','code']] as $source) {
+            try {
+                $known=smp_db_fetch_one($db,
+                    "SELECT `{$source[1]}` AS serial FROM `{$source[0]}` WHERE UPPER(TRIM(CAST(`{$source[1]}` AS CHAR)))=UPPER(TRIM(?)) LIMIT 1",
+                    [$serial]);
+                if($known) return ['serial'=>$serial];
+            } catch(Throwable $e) { /* optional legacy source */ }
         }
         return null;
     }
