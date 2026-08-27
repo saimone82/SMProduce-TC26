@@ -431,7 +431,7 @@ async function printReport(pid){
 }
 
 
-async function loadList() {
+async function loadList(silent=false) {
   const r = await api({
     action:'list',
     status: document.getElementById('fStatus').value,
@@ -439,7 +439,7 @@ async function loadList() {
     date_from: document.getElementById('fFrom').value,
     date_to:   document.getElementById('fTo').value,
   });
-  if (!r.ok) { alert(r.err); return; }
+  if (!r.ok) { if(!silent)alert(r.err); return; }
   const rows = r.pallets || [];
   const open    = rows.filter(x=>x.status==='OPEN').length;
   const partial = rows.filter(x=>x.status==='PARTIAL').length;
@@ -625,6 +625,9 @@ const urlP = new URLSearchParams(location.search);
 if (urlP.get('highlight')) setTimeout(()=>showDetail(urlP.get('highlight')), 400);
 
 loadList();
+// Pallets can be created or completed from the APK. Refresh the list
+// automatically so operators do not need to reload this page manually.
+setInterval(()=>{if(!document.hidden)loadList(true).catch(()=>{});},5000);
 </script>
 
 <?php include '../includes/footer.php'; ?>
