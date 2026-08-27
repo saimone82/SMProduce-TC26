@@ -133,6 +133,12 @@ try {
              (int)($input['order_id']??0) ?: null, date('Y-m-d'), $sid]);
         ps_out(ps_shipment_detail($dbx, $sid));
     }
+    if ($action === 'verify_skip_po_password') {
+        $password = (string)($input['password'] ?? '');
+        $expected = strtolower(trim((string)($cfg['skip_po_password_sha256'] ?? '')));
+        $valid = $expected !== '' && hash_equals($expected, hash('sha256', $password));
+        ps_out($valid ? ['ok'=>1] : ['ok'=>0, 'err'=>'Incorrect password']);
+    }
     if ($action === 'order_search') {
         $q = '%'.trim((string)($input['q'] ?? '')).'%';
         $rows = smp_db_fetch_all($dbx,
