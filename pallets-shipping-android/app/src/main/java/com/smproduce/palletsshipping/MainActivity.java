@@ -28,6 +28,8 @@ public class MainActivity extends Activity {
     String palletId = "", shipmentId = "";
     int caseCount = 0, palletCount = 0, shipmentCases = 0;
     JSONObject selectedOrder;
+    boolean shipmentMismatch = false;
+    String shipmentCompareMessage = "";
     final ExecutorService io = Executors.newSingleThreadExecutor();
     final ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90);
     QueueDb queue;
@@ -109,7 +111,9 @@ public class MainActivity extends Activity {
         String id=cases?palletId:shipmentId;
         heading(cases?tr("Scan the cases","Escanee las cajas"):tr("Scan the pallet labels","Escanee las etiquetas de los pallets"),id);
         counter=tv(cases?caseCount+" "+tr("CASES","CAJAS"):palletCount+" "+tr("PALLETS","PALLETS"),34,Color.rgb(102,187,106));counter.setGravity(Gravity.CENTER);counter.setTypeface(null,1);body.addView(counter,new LinearLayout.LayoutParams(-1,-2));
-        detail=tv(tr("Ready to scan","Listo para escanear")+(online?"":"\n"+tr("Scans will be synchronized automatically","Las lecturas se sincronizarán automáticamente")),16,Color.WHITE);detail.setGravity(Gravity.CENTER);body.addView(detail,new LinearLayout.LayoutParams(-1,-2));
+        String scanStatus=tr("Ready to scan","Listo para escanear")+(online?"":"\n"+tr("Scans will be synchronized automatically","Las lecturas se sincronizarán automáticamente"));
+        if(!cases&&!shipmentCompareMessage.isEmpty())scanStatus+="\n\n"+shipmentCompareMessage;
+        detail=tv(scanStatus,16,shipmentMismatch?Color.rgb(255,143,0):Color.WHITE);detail.setGravity(Gravity.CENTER);body.addView(detail,new LinearLayout.LayoutParams(-1,-2));
         addSpace(16);Button remove=choice("Remove Last","Eliminar último",v->removeLast(cases));remove.setBackgroundColor(Color.rgb(198,40,40));
         next.setVisibility(View.VISIBLE);next.setText(tr("Finish","Finalizar"));
     }
@@ -158,15 +162,26 @@ public class MainActivity extends Activity {
     }
     void scanPallet(String code){
         if(!online){queue.add("PALLET",shipmentId,code);palletCount++;ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();return;}
-        call(map("action","shipment_scan_pallet","shipment_id",shipmentId,"pallet_id",code),j->{palletCount=j.optInt("pallet_count",palletCount+1);shipmentCases=j.optInt("cases_count",shipmentCases);ok(code);render();});
+        call(map("action","shipment_scan_pallet","shipment_id",shipmentId,"pallet_id",code),j->{palletCount=j.optInt("pallet_count",palletCount+1);shipmentCases=j.optInt("cases_count",shipmentCases);ok(code);render();if(selectedOrder!=null)checkPoAfterScan();});
     }
     void removeLast(boolean cases){
         if(!online){ if(queue.removeLast(cases?"CASE":"PALLET",cases?palletId:shipmentId)){if(cases)caseCount=Math.max(0,caseCount-1);else palletCount=Math.max(0,palletCount-1);render();}else error(tr("Nothing offline to remove","Nada sin conexión para eliminar")); return; }
-        call(map("action",cases?"pallet_remove_last":"shipment_remove_last",cases?"pallet_id":"shipment_id",cases?palletId:shipmentId),j->{if(cases)caseCount=j.optInt("cases_count");else{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");}render();});
+        call(map("action",cases?"pallet_remove_last":"shipment_remove_last",cases?"pallet_id":"shipment_id",cases?palletId:shipmentId),j->{if(cases)caseCount=j.optInt("cases_count");else{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");shipmentMismatch=false;shipmentCompareMessage="";}render();if(!cases&&selectedOrder!=null)checkPoAfterScan();});
     }
     void finishPallet(boolean complete){ if(!online||queue.countFor(palletId)>0){error(tr("Wait for synchronization before finishing","Espere la sincronización antes de finalizar"));return;}call(map("action",complete?"pallet_close":"pallet_partial","pallet_id",palletId),j->done(complete?tr("Pallet closed as complete and sent to print","Pallet cerrado como completo y enviado a imprimir"):tr("Pallet closed as partial and sent to print","Pallet cerrado como parcial y enviado a imprimir"))); }
     void closeShipment(){
         if(!online||queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before closing","Espere la sincronización antes de cerrar"));return;}
+        if(palletCount<=0){error(tr("Scan at least one pallet","Escanee al menos un pallet"));return;}
+        if(selectedOrder!=null){
+            callUrl(BuildConfig.SHIPPING_API_URL,map("action","compare","shipment_id",shipmentId,"order_id",selectedOrder.optString("id")),cmp->{
+                applyComparison(cmp,false);
+                if(cmp.optBoolean("all_ok",false))performShipmentClose();else requestMismatchOverride();
+            });
+            return;
+        }
+        performShipmentClose();
+    }
+    void performShipmentClose(){
         call(map("action","shipment_close","shipment_id",shipmentId),closed->{
             callUrl(BuildConfig.SHIPPING_API_URL,map("action","bol","shipment_id",shipmentId),bol->{
                 callUrl(BuildConfig.SHIPPING_API_URL,map("action","queue_bol_print","shipment_id",shipmentId),printed->{
@@ -176,7 +191,7 @@ public class MainActivity extends Activity {
         });
     }
     void done(String msg){step=Step.DONE;render();subtitle.setText(msg);}
-    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;step=Step.HOME;render();}
+    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;shipmentMismatch=false;shipmentCompareMessage="";step=Step.HOME;render();}
 
     void searchOrders(String q){ if(!online){error(tr("Order search requires connection","La búsqueda requiere conexión"));return;}call(map("action","order_search","q",q),j->showOrders(j.optJSONArray("orders"))); }
     void requestSkipPassword(){
@@ -187,6 +202,35 @@ public class MainActivity extends Activity {
     }
     void verifySkipPassword(String password){
         call(map("action","verify_skip_po_password","password",password),j->{selectedOrder=null;step=Step.SHIP_SCAN;render();});
+    }
+    void requestMismatchOverride(){
+        final EditText input=new EditText(this);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        new AlertDialog.Builder(this).setTitle(tr("PO discrepancy","Diferencia con el PO"))
+            .setMessage(shipmentCompareMessage+"\n\n"+tr("Enter the override password to close anyway.","Introduzca la contraseña para cerrar de todos modos."))
+            .setView(input).setPositiveButton(tr("Override and Close","Anular y cerrar"),(d,w)->
+                call(map("action","verify_skip_po_password","password",input.getText().toString()),j->performShipmentClose()))
+            .setNegativeButton(tr("Go Back","Volver"),null).show();
+    }
+    void checkPoAfterScan(){
+        callUrl(BuildConfig.SHIPPING_API_URL,map("action","compare","shipment_id",shipmentId,"order_id",selectedOrder.optString("id")),cmp->{
+            boolean dangerous=applyComparison(cmp,true);render();
+            if(dangerous)new AlertDialog.Builder(this).setTitle(tr("Pallet does not match the PO","El pallet no coincide con el PO"))
+                .setMessage(shipmentCompareMessage)
+                .setPositiveButton(tr("Remove Last Pallet","Eliminar último pallet"),(d,w)->removeLast(false))
+                .setNegativeButton(tr("Keep and Review","Mantener y revisar"),null).show();
+        });
+    }
+    boolean applyComparison(JSONObject cmp,boolean duringScan){
+        int ordered=cmp.optInt("po_qty",0),scanned=cmp.optInt("ship_qty",0);JSONObject po=cmp.optJSONObject("po_varieties"),ship=cmp.optJSONObject("ship_varieties");
+        boolean dangerous=scanned>ordered&&ordered>0;ArrayList<String>issues=new ArrayList<>();
+        if(dangerous)issues.add(tr("Too many cases: ","Demasiadas cajas: ")+scanned+" / "+ordered);
+        if(ship!=null){Iterator<String>it=ship.keys();while(it.hasNext()){String v=it.next();int s=ship.optInt(v),p=po==null?0:po.optInt(v,0);if(p==0||s>p){dangerous=true;issues.add(v+": "+s+" / "+p);}}}
+        int remaining=Math.max(0,ordered-scanned);
+        if(issues.isEmpty())shipmentCompareMessage=remaining>0?tr("PO compatible · Remaining cases: ","PO compatible · Cajas restantes: ")+remaining:tr("PO matches the shipment","El PO coincide con el envío");
+        else shipmentCompareMessage=tr("Discrepancy: ","Diferencia: ")+android.text.TextUtils.join("; ",issues);
+        shipmentMismatch=dangerous||(!duringScan&&!cmp.optBoolean("all_ok",false));
+        if(!duringScan&&!cmp.optBoolean("all_ok",false)&&issues.isEmpty())shipmentCompareMessage=tr("Order incomplete · Remaining cases: ","Pedido incompleto · Cajas restantes: ")+remaining;
+        return dangerous;
     }
     void showOrders(JSONArray a){
         if(a==null||a.length()==0){error(tr("No open orders found","No se encontraron pedidos abiertos"));return;}
@@ -232,7 +276,7 @@ public class MainActivity extends Activity {
     }
     void checkNetwork(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);boolean was=online;online=cap!=null&&cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);network.setText(online?tr("● ONLINE","● EN LÍNEA"):tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(online?Color.rgb(102,187,106):Color.rgb(255,143,0));if(online&&!was)syncQueue();}
     void syncQueue(){io.execute(()->{List<QueueDb.Item>items=queue.all();int done=0;for(QueueDb.Item x:items){try{Map<String,String>m=x.type.equals("CASE")?map("action","pallet_scan_case","pallet_id",x.parent,"case_serial",x.code):map("action","shipment_scan_pallet","shipment_id",x.parent,"pallet_id",x.code);JSONObject j=request(m);if(j.optInt("ok")==1||j.optString("err").toLowerCase().contains("already")){queue.remove(x.id);done++;}else break;}catch(Exception e){break;}}int d=done;if(d>0)runOnUiThread(()->{Toast.makeText(this,tr("Synchronized ","Sincronizados ")+d,Toast.LENGTH_LONG).show();refreshCurrent();});});}
-    void refreshCurrent(){if(!online)return;if(!palletId.isEmpty())call(map("action","pallet_status","pallet_id",palletId),j->{caseCount=j.optInt("cases_count");render();});else if(!shipmentId.isEmpty())call(map("action","shipment_resume","shipment_id",shipmentId),j->{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");render();});}
+    void refreshCurrent(){if(!online)return;if(!palletId.isEmpty())call(map("action","pallet_status","pallet_id",palletId),j->{caseCount=j.optInt("cases_count");render();});else if(!shipmentId.isEmpty())call(map("action","shipment_resume","shipment_id",shipmentId),j->{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");render();if(selectedOrder!=null)checkPoAfterScan();});}
 
     static class QueueDb extends SQLiteOpenHelper{
         static class Item{long id;String type,parent,code;Item(long i,String t,String p,String c){id=i;type=t;parent=p;code=c;}}
