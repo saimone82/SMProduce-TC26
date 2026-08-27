@@ -45,15 +45,20 @@ public class MainActivity extends Activity {
     long lastKeyAt = 0;
     String lastScanCode = "";
     long lastScanAt = 0;
+    boolean probing = false;
+    final Handler healthHandler = new Handler(Looper.getMainLooper());
+    final Runnable healthRunnable = new Runnable(){
+        @Override public void run(){ probeServer(); healthHandler.postDelayed(this, online?12000:3000); }
+    };
 
     String tr(String en, String es) { return spanish ? es : en; }
     int dp(int n){ return Math.round(n * getResources().getDisplayMetrics().density); }
 
     @Override public void onCreate(Bundle b) {
-        super.onCreate(b); queue = new QueueDb(this); buildShell(); registerReceivers(); configureDataWedge(); checkNetwork(); render();
+        super.onCreate(b); queue = new QueueDb(this); buildShell(); registerReceivers(); configureDataWedge(); checkNetwork(); render();healthHandler.postDelayed(healthRunnable,1000);
     }
     @Override protected void onResume(){ super.onResume(); configureDataWedge(); }
-    @Override public void onDestroy(){ super.onDestroy(); try{unregisterReceiver(scannerReceiver);}catch(Exception ignored){} try{unregisterReceiver(networkReceiver);}catch(Exception ignored){} io.shutdownNow(); tone.release(); }
+    @Override public void onDestroy(){ super.onDestroy();healthHandler.removeCallbacks(healthRunnable);try{unregisterReceiver(scannerReceiver);}catch(Exception ignored){} try{unregisterReceiver(networkReceiver);}catch(Exception ignored){} io.shutdownNow(); tone.release(); }
 
     void buildShell(){
         root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.rgb(11,22,34));
@@ -181,7 +186,7 @@ public class MainActivity extends Activity {
         // both Intent Output and Keystroke Output. Accept it only once.
         if(code.length()%2==0){String a=code.substring(0,code.length()/2);String b=code.substring(code.length()/2);if(a.equals(b))code=a;}
         long now=System.currentTimeMillis();
-        if(code.equals(lastScanCode)&&now-lastScanAt<1500)return;
+        if(code.equals(lastScanCode)&&now-lastScanAt<1500){if(step==Step.PALLET_SCAN&&!online)showDuplicateCase();return;}
         lastScanCode=code;lastScanAt=now;
         if(step==Step.PALLET_RESUME){manual.setText(code);resumePallet(code);return;}
         if(step==Step.SHIP_RESUME){manual.setText(code);resumeShipment(code);return;}
@@ -191,7 +196,12 @@ public class MainActivity extends Activity {
     }
     void scanCase(String code){
         scanErrorMessage="";
-        if(!online){queue.add("CASE",palletId,code);caseCount++;if(!scannedCases.contains(code))scannedCases.add(code);ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();return;}
+        if(!online){
+            if(scannedCases.contains(code)||queue.exists("CASE",palletId,code)){showDuplicateCase();return;}
+            if(queue.add("CASE",palletId,code)){caseCount++;scannedCases.add(code);ok(tr("Saved offline: ","Guardado sin conexión: ")+code);}
+            else showDuplicateCase();
+            render();return;
+        }
         callScanOrQueue(map("action","pallet_scan_case","pallet_id",palletId,"case_serial",code),"CASE",palletId,code,j->{caseCount=j.optInt("cases_count",caseCount+1);loadCases(j);ok(code);render();});
     }
     void scanPallet(String code){
@@ -278,7 +288,7 @@ public class MainActivity extends Activity {
     void call(Map<String,String> data,Success success){ callUrl(BuildConfig.API_URL,data,success); }
     void callScanOrQueue(Map<String,String> data,String type,String parent,String code,Success success){
         if(busy)return;busy=true;io.execute(()->{try{JSONObject j=request(data);runOnUiThread(()->{busy=false;if(j.optInt("ok")==1)success.run(j);else{String msg=localizeError(j.optString("err",tr("Operation failed","Operación fallida")));String low=msg.toLowerCase();if(low.contains("already scanned")||low.contains("ya fue escaneada")||low.contains("ya escaneada")){scanErrorMessage=tr("CASE ALREADY SCANNED","CAJA YA ESCANEADA");tone.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT,350);render();}else error(msg);}});}
-        catch(Exception e){queue.add(type,parent,code);runOnUiThread(()->{busy=false;online=false;if(type.equals("CASE"))caseCount++;else palletCount++;network.setText(tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(Color.rgb(255,143,0));ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();});}});
+        catch(Exception e){boolean added=queue.add(type,parent,code);runOnUiThread(()->{busy=false;setOnlineState(false);if(!added&&type.equals("CASE")){showDuplicateCase();return;}if(added){if(type.equals("CASE")){caseCount++;if(!scannedCases.contains(code))scannedCases.add(code);}else palletCount++;ok(tr("Saved offline: ","Guardado sin conexión: ")+code);}render();});}});
     }
     void callUrl(String url,Map<String,String> data,Success success){
         if(busy)return;busy=true; io.execute(()->{try{JSONObject j=requestUrl(url,data);runOnUiThread(()->{busy=false;if(j.optInt("ok")==1)success.run(j);else error(localizeError(j.optString("err",tr("Operation failed","Operación fallida"))));});}catch(Exception e){runOnUiThread(()->{busy=false;checkNetwork();error(tr("Connection error","Error de conexión")+": "+e.getMessage());});}});
@@ -288,13 +298,14 @@ public class MainActivity extends Activity {
     }
     JSONObject requestUrl(String url,Map<String,String> data)throws Exception{
         StringBuilder body=new StringBuilder();for(Map.Entry<String,String>e:data.entrySet()){if(body.length()>0)body.append('&');body.append(URLEncoder.encode(e.getKey(),"UTF-8")).append('=').append(URLEncoder.encode(e.getValue(),"UTF-8"));}
-        HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();c.setConnectTimeout(9000);c.setReadTimeout(45000);c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("X-App-Token",BuildConfig.APP_TOKEN);c.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");try(OutputStream o=c.getOutputStream()){o.write(body.toString().getBytes(StandardCharsets.UTF_8));}
+        HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();c.setConnectTimeout(3000);c.setReadTimeout(7000);c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("X-App-Token",BuildConfig.APP_TOKEN);c.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");try(OutputStream o=c.getOutputStream()){o.write(body.toString().getBytes(StandardCharsets.UTF_8));}
         InputStream in=c.getResponseCode()<400?c.getInputStream():c.getErrorStream();String s=read(in);return new JSONObject(s);
     }
     String read(InputStream in)throws IOException{ByteArrayOutputStream o=new ByteArrayOutputStream();byte[]b=new byte[4096];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString("UTF-8");}
     String localizeError(String e){if(!spanish)return e;String l=e.toLowerCase();if(l.contains("already belongs"))return "La caja ya pertenece a otro pallet";if(l.contains("already scanned"))return "La caja ya fue escaneada";if(l.contains("not found"))return "Código no encontrado";if(l.contains("already in this shipment"))return "El pallet ya está en este envío";if(l.contains("not partial"))return "El pallet escaneado no es parcial";return e;}
 
     void ok(String s){tone.startTone(ToneGenerator.TONE_PROP_BEEP,120);Toast.makeText(this,"✓ "+s,Toast.LENGTH_SHORT).show();}
+    void showDuplicateCase(){scanErrorMessage=tr("CASE ALREADY SCANNED","CAJA YA ESCANEADA");tone.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT,350);render();}
     void error(String s){tone.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT,350);new AlertDialog.Builder(this).setTitle(tr("Attention","Atención")).setMessage(s).setPositiveButton("OK",null).show();}
 
     void registerReceivers(){
@@ -326,16 +337,19 @@ public class MainActivity extends Activity {
         Intent setOut=new Intent("com.symbol.datawedge.api.ACTION");setOut.putExtra("com.symbol.datawedge.api.SET_CONFIG",outCfg);sendBroadcast(setOut);
         Bundle keyParams=new Bundle();keyParams.putString("keystroke_output_enabled","false");Bundle keyOut=new Bundle();keyOut.putString("PLUGIN_NAME","KEYSTROKE");keyOut.putString("RESET_CONFIG","true");keyOut.putBundle("PARAM_LIST",keyParams);Bundle keyCfg=new Bundle();keyCfg.putString("PROFILE_NAME",profile);keyCfg.putString("PROFILE_ENABLED","true");keyCfg.putString("CONFIG_MODE","UPDATE");keyCfg.putBundle("PLUGIN_CONFIG",keyOut);Intent setKey=new Intent("com.symbol.datawedge.api.ACTION");setKey.putExtra("com.symbol.datawedge.api.SET_CONFIG",keyCfg);sendBroadcast(setKey);
     }
-    void checkNetwork(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);boolean was=online;online=cap!=null&&cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);network.setText(online?tr("● ONLINE","● EN LÍNEA"):tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(online?Color.rgb(102,187,106):Color.rgb(255,143,0));if(online&&!was)syncQueue();}
+    void setOnlineState(boolean value){online=value;network.setText(online?tr("● ONLINE","● EN LÍNEA"):tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(online?Color.rgb(102,187,106):Color.rgb(255,143,0));}
+    void checkNetwork(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);boolean internet=cap!=null&&cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);if(!internet)setOnlineState(false);else probeServer();}
+    void probeServer(){if(probing||io.isShutdown())return;ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);if(cap==null||!cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)){setOnlineState(false);return;}probing=true;io.execute(()->{boolean reachable=false;try{JSONObject j=request(map("action","ping"));reachable=j.optInt("ok")==1;}catch(Exception ignored){}boolean ok=reachable;runOnUiThread(()->{boolean was=online;probing=false;setOnlineState(ok);if(ok&&!was)syncQueue();});});}
     void syncQueue(){io.execute(()->{List<QueueDb.Item>items=queue.all();int done=0;for(QueueDb.Item x:items){try{
             if(x.type.equals("CREATE_PALLET")){JSONObject j=request(map("action","pallet_new"));if(j.optInt("ok")!=1)break;String real=j.optString("pallet_id");queue.replaceParent(x.parent,real);queue.remove(x.id);if(palletId.equals(x.parent))palletId=real;done++;continue;}
             Map<String,String>m=x.type.equals("CASE")?map("action","pallet_scan_case","pallet_id",x.parent,"case_serial",x.code):map("action","shipment_scan_pallet","shipment_id",x.parent,"pallet_id",x.code);JSONObject j=request(m);if(j.optInt("ok")==1||j.optString("err").toLowerCase().contains("already")){queue.remove(x.id);done++;}else break;}catch(Exception e){break;}}int d=done;if(d>0)runOnUiThread(()->{Toast.makeText(this,tr("Synchronized ","Sincronizados ")+d,Toast.LENGTH_LONG).show();refreshCurrent();});});}
-    void refreshCurrent(){if(!online)return;if(!palletId.isEmpty())call(map("action","pallet_status","pallet_id",palletId),j->{caseCount=j.optInt("cases_count");render();});else if(!shipmentId.isEmpty())call(map("action","shipment_resume","shipment_id",shipmentId),j->{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");render();if(selectedOrder!=null)checkPoAfterScan();});}
+    void refreshCurrent(){if(!online)return;if(!palletId.isEmpty())call(map("action","pallet_status","pallet_id",palletId),j->{caseCount=j.optInt("cases_count");loadCases(j);render();});else if(!shipmentId.isEmpty())call(map("action","shipment_resume","shipment_id",shipmentId),j->{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");render();if(selectedOrder!=null)checkPoAfterScan();});}
 
     static class QueueDb extends SQLiteOpenHelper{
         static class Item{long id;String type,parent,code;Item(long i,String t,String p,String c){id=i;type=t;parent=p;code=c;}}
         QueueDb(Context c){super(c,"pallets_shipping_offline.db",null,1);}public void onCreate(SQLiteDatabase d){d.execSQL("CREATE TABLE queue(id INTEGER PRIMARY KEY AUTOINCREMENT,type TEXT,parent TEXT,code TEXT,created INTEGER,UNIQUE(type,parent,code))");}public void onUpgrade(SQLiteDatabase d,int a,int b){}
-        void add(String t,String p,String c){ContentValues v=new ContentValues();v.put("type",t);v.put("parent",p);v.put("code",c);v.put("created",System.currentTimeMillis());getWritableDatabase().insertWithOnConflict("queue",null,v,SQLiteDatabase.CONFLICT_IGNORE);}
+        boolean add(String t,String p,String c){ContentValues v=new ContentValues();v.put("type",t);v.put("parent",p);v.put("code",c);v.put("created",System.currentTimeMillis());return getWritableDatabase().insertWithOnConflict("queue",null,v,SQLiteDatabase.CONFLICT_IGNORE)!=-1;}
+        boolean exists(String t,String p,String code){try(Cursor c=getReadableDatabase().rawQuery("SELECT 1 FROM queue WHERE type=? AND parent=? AND code=? LIMIT 1",new String[]{t,p,code})){return c.moveToFirst();}}
         List<Item> all(){ArrayList<Item>l=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT id,type,parent,code FROM queue ORDER BY id",null)){while(c.moveToNext())l.add(new Item(c.getLong(0),c.getString(1),c.getString(2),c.getString(3)));}return l;}
         void remove(long id){getWritableDatabase().delete("queue","id=?",new String[]{String.valueOf(id)});}int countFor(String p){try(Cursor c=getReadableDatabase().rawQuery("SELECT COUNT(*) FROM queue WHERE parent=?",new String[]{p})){return c.moveToFirst()?c.getInt(0):0;}}
         void replaceParent(String oldParent,String newParent){ContentValues v=new ContentValues();v.put("parent",newParent);getWritableDatabase().update("queue",v,"parent=?",new String[]{oldParent});}
