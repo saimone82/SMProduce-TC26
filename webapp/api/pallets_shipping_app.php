@@ -85,9 +85,16 @@ try {
     if ($action === 'pallet_scan_case') {
         $pid = trim((string)($input['pallet_id'] ?? ''));
         $serial = trim((string)($input['case_serial'] ?? ''));
-        $other = smp_db_fetch_one($dbx,
-            "SELECT pallet_id FROM pallet_cases WHERE case_serial=? AND pallet_id<>? LIMIT 1", [$serial, $pid]);
-        if ($other) ps_out(['ok'=>0, 'err'=>'Case already belongs to pallet '.$other['pallet_id']]);
+        $existing = smp_db_fetch_one($dbx,
+            "SELECT pallet_id FROM pallet_cases WHERE case_serial=? LIMIT 1", [$serial]);
+        // Idempotent scan: Zebra/DataWedge can occasionally deliver the same
+        // barcode twice. A repeat on the current pallet is a successful no-op.
+        if ($existing && (string)$existing['pallet_id'] === $pid) {
+            $detail = ps_pallet_detail($dbx, $pid);
+            $detail['duplicate_ignored'] = 1;
+            ps_out($detail);
+        }
+        if ($existing) ps_out(['ok'=>0, 'err'=>'Case already belongs to pallet '.$existing['pallet_id']]);
         $res = smp_tc26_add_case_to_pallet($dbx, $pid, $serial, $uid);
         if (empty($res['ok'])) ps_out($res);
         ps_out(ps_pallet_detail($dbx, $pid));
@@ -151,6 +158,13 @@ try {
     if ($action === 'shipment_scan_pallet') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
         $pid = trim((string)($input['pallet_id'] ?? ''));
+        $existing = smp_db_fetch_one($dbx,
+            "SELECT id FROM shipment_pallets WHERE shipment_id=? AND pallet_id=? LIMIT 1", [$sid,$pid]);
+        if ($existing) {
+            $detail = ps_shipment_detail($dbx, $sid);
+            $detail['duplicate_ignored'] = 1;
+            ps_out($detail);
+        }
         $res = smp_tc26_add_pallet_to_shipment($dbx, $sid, $pid, $uid);
         if (empty($res['ok'])) ps_out($res);
         ps_out(ps_shipment_detail($dbx, $sid));
