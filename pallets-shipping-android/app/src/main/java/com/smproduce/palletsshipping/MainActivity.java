@@ -31,6 +31,7 @@ public class MainActivity extends Activity {
     boolean shipmentMismatch = false;
     String shipmentCompareMessage = "";
     String scanErrorMessage = "";
+    JSONArray shipmentSkuLines = new JSONArray();
     boolean casesExpanded = false;
     final ArrayList<String> scannedCases = new ArrayList<>();
     final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -71,7 +72,8 @@ public class MainActivity extends Activity {
         root.addView(header);
         progress=tv("",12,Color.rgb(110,140,170)); progress.setPadding(dp(18),dp(12),dp(18),0); root.addView(progress);
         body=new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setGravity(Gravity.CENTER_HORIZONTAL); body.setPadding(dp(18),dp(16),dp(18),dp(12));
-        root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.addView(body,new ScrollView.LayoutParams(-1,-2));
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         nav=new LinearLayout(this); nav.setPadding(dp(14),dp(10),dp(14),dp(14)); nav.setGravity(Gravity.CENTER);
         back=button("Back",Color.rgb(52,65,85)); next=button("Next",Color.rgb(25,118,210));
         back.setOnClickListener(v->goBack()); next.setOnClickListener(v->goNext());
@@ -128,6 +130,7 @@ public class MainActivity extends Activity {
         if(!cases&&!shipmentCompareMessage.isEmpty())scanStatus+="\n\n"+shipmentCompareMessage;
         if(cases&&!scanErrorMessage.isEmpty())scanStatus+="\n\n"+scanErrorMessage;
         detail=tv(scanStatus,16,cases&&!scanErrorMessage.isEmpty()?Color.rgb(239,68,68):(shipmentMismatch?Color.rgb(255,143,0):Color.WHITE));detail.setGravity(Gravity.CENTER);body.addView(detail,new LinearLayout.LayoutParams(-1,-2));
+        if(!cases&&selectedOrder!=null)renderShipmentSkuProgress();
         addSpace(16);Button remove=choice("Remove Last","Eliminar último",v->removeLast(cases));remove.setBackgroundColor(Color.rgb(198,40,40));
         if(cases){
             Button toggle=choice(casesExpanded?"Hide scanned cases":"Scanned cases",casesExpanded?"Ocultar cajas escaneadas":"Cajas escaneadas",v->{casesExpanded=!casesExpanded;render();});
@@ -140,6 +143,30 @@ public class MainActivity extends Activity {
             }
         }
         next.setVisibility(View.VISIBLE);next.setText(tr("Finish","Finalizar"));
+    }
+
+    void renderShipmentSkuProgress(){
+        TextView label=tv(tr("PO CONTENT · LOADED / REQUIRED","CONTENIDO PO · CARGADO / REQUERIDO"),13,Color.rgb(148,163,184));
+        label.setTypeface(null,1);label.setPadding(0,dp(12),0,dp(7));body.addView(label,new LinearLayout.LayoutParams(-1,-2));
+        if(shipmentSkuLines==null||shipmentSkuLines.length()==0){
+            TextView loading=tv(tr("Loading PO lines…","Cargando líneas del PO…"),15,Color.LTGRAY);
+            body.addView(loading,new LinearLayout.LayoutParams(-1,-2));return;
+        }
+        for(int i=0;i<shipmentSkuLines.length();i++){
+            JSONObject line=shipmentSkuLines.optJSONObject(i);if(line==null)continue;
+            int required=line.optInt("required",0),loaded=line.optInt("loaded",0);
+            boolean complete=required>0&&loaded==required;
+            boolean over=loaded>required||line.optBoolean("extra",false);
+            LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setPadding(dp(12),dp(9),dp(12),dp(9));
+            card.setBackgroundColor(complete?Color.rgb(22,101,52):Color.rgb(127,29,29));
+            String meta=line.optString("variety");
+            if(!line.optString("size").isEmpty())meta+=(meta.isEmpty()?"":" · ")+line.optString("size");
+            if(!line.optString("packaging").isEmpty())meta+=(meta.isEmpty()?"":" · ")+line.optString("packaging");
+            TextView name=tv("SKU "+line.optString("sku")+(meta.isEmpty()?"":" · "+meta),15,Color.WHITE);name.setTypeface(null,1);card.addView(name);
+            String state=complete?tr("COMPLETE","COMPLETO"):over?tr("TOO MANY / NOT IN PO","DEMASIADO / NO ESTÁ EN PO"):tr("MISSING ","FALTAN ")+Math.max(0,required-loaded);
+            TextView qty=tv(loaded+" / "+required+" "+tr("CASES","CAJAS")+"  ·  "+state,17,Color.WHITE);qty.setTypeface(null,1);card.addView(qty);
+            LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.setMargins(0,0,0,dp(7));body.addView(card,cp);
+        }
     }
 
     void orderScreen(){
@@ -235,7 +262,7 @@ public class MainActivity extends Activity {
         });
     }
     void done(String msg){step=Step.DONE;render();subtitle.setText(msg);}
-    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;shipmentMismatch=false;shipmentCompareMessage="";scanErrorMessage="";casesExpanded=false;scannedCases.clear();step=Step.HOME;render();}
+    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;shipmentMismatch=false;shipmentCompareMessage="";scanErrorMessage="";shipmentSkuLines=new JSONArray();casesExpanded=false;scannedCases.clear();step=Step.HOME;render();}
 
     void searchOrders(String q){ if(!online){error(tr("Order search requires connection","La búsqueda requiere conexión"));return;}call(map("action","order_search","q",q),j->showOrders(j.optJSONArray("orders"))); }
     void requestSkipPassword(){
@@ -256,15 +283,19 @@ public class MainActivity extends Activity {
             .setNegativeButton(tr("Go Back","Volver"),null).show();
     }
     void checkPoAfterScan(){
+        checkPoAfterScan(true);
+    }
+    void checkPoAfterScan(boolean warnOnMismatch){
         callUrl(BuildConfig.SHIPPING_API_URL,map("action","compare","shipment_id",shipmentId,"order_id",selectedOrder.optString("id")),cmp->{
             boolean dangerous=applyComparison(cmp,true);render();
-            if(dangerous)new AlertDialog.Builder(this).setTitle(tr("Pallet does not match the PO","El pallet no coincide con el PO"))
+            if(dangerous&&warnOnMismatch)new AlertDialog.Builder(this).setTitle(tr("Pallet does not match the PO","El pallet no coincide con el PO"))
                 .setMessage(shipmentCompareMessage)
                 .setPositiveButton(tr("Remove Last Pallet","Eliminar último pallet"),(d,w)->removeLast(false))
                 .setNegativeButton(tr("Keep and Review","Mantener y revisar"),null).show();
         });
     }
     boolean applyComparison(JSONObject cmp,boolean duringScan){
+        JSONArray lines=cmp.optJSONArray("sku_lines");shipmentSkuLines=lines==null?new JSONArray():lines;
         int ordered=cmp.optInt("po_qty",0),scanned=cmp.optInt("ship_qty",0);JSONObject po=cmp.optJSONObject("po_varieties"),ship=cmp.optJSONObject("ship_varieties");
         boolean dangerous=scanned>ordered&&ordered>0;ArrayList<String>issues=new ArrayList<>();
         if(dangerous)issues.add(tr("Too many cases: ","Demasiadas cajas: ")+scanned+" / "+ordered);
@@ -279,7 +310,7 @@ public class MainActivity extends Activity {
     void showOrders(JSONArray a){
         if(a==null||a.length()==0){error(tr("No open orders found","No se encontraron pedidos abiertos"));return;}
         String[] names=new String[a.length()];for(int i=0;i<a.length();i++){JSONObject o=a.optJSONObject(i);names[i]=o.optString("po")+" · "+o.optString("customer_name");}
-        new AlertDialog.Builder(this).setTitle(tr("Select order","Seleccione el pedido")).setItems(names,(d,w)->{selectedOrder=a.optJSONObject(w);call(map("action","shipment_set_order","shipment_id",shipmentId,"order_id",selectedOrder.optString("id"),"po",selectedOrder.optString("po"),"customer_name",selectedOrder.optString("customer_name")),j->{step=Step.SHIP_SCAN;render();});}).setNegativeButton(tr("Cancel","Cancelar"),null).show();
+        new AlertDialog.Builder(this).setTitle(tr("Select order","Seleccione el pedido")).setItems(names,(d,w)->{selectedOrder=a.optJSONObject(w);shipmentSkuLines=new JSONArray();call(map("action","shipment_set_order","shipment_id",shipmentId,"order_id",selectedOrder.optString("id"),"po",selectedOrder.optString("po"),"customer_name",selectedOrder.optString("customer_name")),j->{step=Step.SHIP_SCAN;render();checkPoAfterScan(false);});}).setNegativeButton(tr("Cancel","Cancelar"),null).show();
     }
 
     interface Success{void run(JSONObject j);}
