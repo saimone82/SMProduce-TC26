@@ -299,6 +299,7 @@ public class MainActivity extends Activity {
         int ordered=cmp.optInt("po_qty",0),scanned=cmp.optInt("ship_qty",0);JSONObject po=cmp.optJSONObject("po_varieties"),ship=cmp.optJSONObject("ship_varieties");
         boolean dangerous=scanned>ordered&&ordered>0;ArrayList<String>issues=new ArrayList<>();
         if(dangerous)issues.add(tr("Too many cases: ","Demasiadas cajas: ")+scanned+" / "+ordered);
+        for(int i=0;i<shipmentSkuLines.length();i++){JSONObject line=shipmentSkuLines.optJSONObject(i);if(line!=null&&(line.optBoolean("over",false)||line.optBoolean("extra",false))){dangerous=true;issues.add("SKU "+line.optString("sku")+": "+line.optInt("loaded")+" / "+line.optInt("required"));}}
         if(ship!=null){Iterator<String>it=ship.keys();while(it.hasNext()){String v=it.next();int s=ship.optInt(v),p=po==null?0:po.optInt(v,0);if(p==0||s>p){dangerous=true;issues.add(v+": "+s+" / "+p);}}}
         int remaining=Math.max(0,ordered-scanned);
         if(issues.isEmpty())shipmentCompareMessage=remaining>0?tr("PO compatible · Remaining cases: ","PO compatible · Cajas restantes: ")+remaining:tr("PO matches the shipment","El PO coincide con el envío");
