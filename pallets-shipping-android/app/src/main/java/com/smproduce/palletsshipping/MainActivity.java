@@ -28,6 +28,8 @@ public class MainActivity extends Activity {
     String palletId = "", shipmentId = "";
     int caseCount = 0, palletCount = 0, shipmentCases = 0;
     JSONObject selectedOrder;
+    JSONArray selectedOrders = new JSONArray();
+    boolean multiPo = false;
     boolean shipmentMismatch = false;
     String shipmentCompareMessage = "";
     String scanErrorMessage = "";
@@ -185,6 +187,7 @@ public class MainActivity extends Activity {
             if(!line.optString("size").isEmpty())meta+=(meta.isEmpty()?"":" · ")+line.optString("size");
             if(!line.optString("packaging").isEmpty())meta+=(meta.isEmpty()?"":" · ")+line.optString("packaging");
             TextView name=tv("SKU "+line.optString("sku")+(meta.isEmpty()?"":" · "+meta),15,Color.WHITE);name.setTypeface(null,1);card.addView(name);
+            if(!line.optString("po").isEmpty()){TextView poLine=tv("PO "+line.optString("po"),14,Color.WHITE);poLine.setTypeface(null,1);card.addView(poLine);}
             String state=complete?tr("COMPLETE","COMPLETO"):over?tr("TOO MANY / NOT IN PO","DEMASIADO / NO ESTÁ EN PO"):tr("MISSING ","FALTAN ")+Math.max(0,required-loaded);
             TextView qty=tv(loaded+" / "+required+" "+tr("CASES","CAJAS")+"  ·  "+state,17,Color.WHITE);qty.setTypeface(null,1);card.addView(qty);
             LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.setMargins(0,0,0,dp(7));body.addView(card,cp);
@@ -261,7 +264,9 @@ public class MainActivity extends Activity {
             shipmentId=j.optString("shipment_id");palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");
             JSONObject ship=j.optJSONObject("shipment");
             if(saved!=null)ship=saved;
-            if(ship!=null&&ship.optInt("order_id",0)>0){
+            JSONArray resumedOrders=j.optJSONArray("shipment_orders");selectedOrders=resumedOrders==null?new JSONArray():resumedOrders;multiPo=selectedOrders.length()>1;
+            if(selectedOrders.length()>0)selectedOrder=selectedOrders.optJSONObject(0);
+            else if(ship!=null&&ship.optInt("order_id",0)>0){
                 selectedOrder=new JSONObject();
                 try{selectedOrder.put("id",ship.optInt("order_id"));selectedOrder.put("po",ship.optString("po"));selectedOrder.put("customer_name",ship.optString("customer_name"));}catch(JSONException ignored){}
             }else selectedOrder=null;
@@ -313,7 +318,7 @@ public class MainActivity extends Activity {
     }
     void scanPallet(String code){
         if(!online){queue.add("PALLET",shipmentId,code);palletCount++;ok(tr("Saved offline: ","Guardado sin conexión: ")+code);render();return;}
-        callScanOrQueue(map("action","shipment_scan_pallet","shipment_id",shipmentId,"pallet_id",code),"PALLET",shipmentId,code,j->{palletCount=j.optInt("pallet_count",palletCount+1);shipmentCases=j.optInt("cases_count",shipmentCases);ok(code);render();if(selectedOrder!=null)checkPoAfterScan();});
+        callScanOrQueue(map("action","shipment_scan_pallet","shipment_id",shipmentId,"pallet_id",code),"PALLET",shipmentId,code,j->{palletCount=j.optInt("pallet_count",palletCount+1);shipmentCases=j.optInt("cases_count",shipmentCases);JSONObject m=j.optJSONObject("multi");if(m!=null)applyComparison(m,true);ok(code);render();if(selectedOrder!=null&&m==null)checkPoAfterScan();});
     }
     void removeLast(boolean cases){
         if(!online){ if(queue.removeLast(cases?"CASE":"PALLET",cases?palletId:shipmentId)){if(cases){caseCount=Math.max(0,caseCount-1);if(!scannedCases.isEmpty())scannedCases.remove(scannedCases.size()-1);scanErrorMessage="";}else palletCount=Math.max(0,palletCount-1);render();}else error(tr("Nothing offline to remove","Nada sin conexión para eliminar")); return; }
@@ -324,6 +329,7 @@ public class MainActivity extends Activity {
         if(!online||queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before closing","Espere la sincronización antes de cerrar"));return;}
         if(palletCount<=0){error(tr("Scan at least one pallet","Escanee al menos un pallet"));return;}
         if(selectedOrder!=null){
+            if(multiPo){call(map("action","shipment_multi_status","shipment_id",shipmentId),cmp->{applyComparison(cmp,false);if(cmp.optBoolean("all_ok",false))performShipmentClose();else requestMismatchOverride();});return;}
             callUrl(BuildConfig.SHIPPING_API_URL,map("action","compare","shipment_id",shipmentId,"order_id",selectedOrder.optString("id")),cmp->{
                 applyComparison(cmp,false);
                 if(cmp.optBoolean("all_ok",false))performShipmentClose();else requestMismatchOverride();
@@ -337,6 +343,13 @@ public class MainActivity extends Activity {
         if(selectedOrder!=null)closeData.put("order_id",selectedOrder.optString("id"));
         call(closeData,closed->{
             final boolean orderFailed=closed.optInt("order_expected",0)==1&&closed.optInt("order_closed",0)!=1;
+            if(multiPo){
+                callUrl(BuildConfig.SHIPPING_API_URL,map("action","multi_bol","shipment_id",shipmentId),printed->{
+                    int count=printed.optInt("bol_count",selectedOrders.length());
+                    if(orderFailed)done(tr("Shipment closed and BOLs printed, but the POs could not all be set to SHIPPED.","Envío cerrado y BOL impresos, pero no todos los PO pudieron marcarse como SHIPPED."));
+                    else done(tr("Shipment closed. "+count+" BOLs printed in 3 copies each.","Envío cerrado. "+count+" BOL impresos en 3 copias cada uno."));
+                });return;
+            }
             callUrl(BuildConfig.SHIPPING_API_URL,map("action","bol","shipment_id",shipmentId),bol->{
                 callUrl(BuildConfig.SHIPPING_API_URL,map("action","queue_bol_print","shipment_id",shipmentId),printed->{
                     if(orderFailed)done(tr("Shipment closed and printed, but the PO could not be set to SHIPPED. Check the order in the webapp.","Envío cerrado e impreso, pero el PO no pudo marcarse como SHIPPED. Compruebe el pedido en la webapp."));
@@ -346,7 +359,7 @@ public class MainActivity extends Activity {
         });
     }
     void done(String msg){step=Step.DONE;render();subtitle.setText(msg);}
-    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;shipmentMismatch=false;shipmentCompareMessage="";scanErrorMessage="";shipmentSkuLines=new JSONArray();casesExpanded=false;palletEditRemove=false;palletEditPassword="";scannedCases.clear();step=Step.HOME;render();}
+    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;selectedOrders=new JSONArray();multiPo=false;shipmentMismatch=false;shipmentCompareMessage="";scanErrorMessage="";shipmentSkuLines=new JSONArray();casesExpanded=false;palletEditRemove=false;palletEditPassword="";scannedCases.clear();step=Step.HOME;render();}
 
     void searchOrders(String q){ if(!online){error(tr("Order search requires connection","La búsqueda requiere conexión"));return;}call(map("action","order_search","q",q),j->showOrders(j.optJSONArray("orders"))); }
     void requestSkipPassword(){
@@ -370,6 +383,7 @@ public class MainActivity extends Activity {
         checkPoAfterScan(true);
     }
     void checkPoAfterScan(boolean warnOnMismatch){
+        if(multiPo){call(map("action","shipment_multi_status","shipment_id",shipmentId),cmp->{boolean dangerous=applyComparison(cmp,true);render();if(dangerous&&warnOnMismatch)new AlertDialog.Builder(this).setTitle(tr("Pallet does not match the selected POs","El pallet no coincide con los PO seleccionados")).setMessage(shipmentCompareMessage).setPositiveButton(tr("Remove Last Pallet","Eliminar último pallet"),(d,w)->removeLast(false)).setNegativeButton(tr("Keep and Review","Mantener y revisar"),null).show();});return;}
         callUrl(BuildConfig.SHIPPING_API_URL,map("action","compare","shipment_id",shipmentId,"order_id",selectedOrder.optString("id")),cmp->{
             boolean dangerous=applyComparison(cmp,true);render();
             if(dangerous&&warnOnMismatch)new AlertDialog.Builder(this).setTitle(tr("Pallet does not match the PO","El pallet no coincide con el PO"))
@@ -381,7 +395,8 @@ public class MainActivity extends Activity {
     boolean applyComparison(JSONObject cmp,boolean duringScan){
         JSONArray lines=cmp.optJSONArray("sku_lines");shipmentSkuLines=lines==null?new JSONArray():lines;
         int ordered=cmp.optInt("po_qty",0),scanned=cmp.optInt("ship_qty",0);JSONObject po=cmp.optJSONObject("po_varieties"),ship=cmp.optJSONObject("ship_varieties");
-        boolean dangerous=scanned>ordered&&ordered>0;ArrayList<String>issues=new ArrayList<>();
+        boolean dangerous=scanned>ordered&&ordered>0||cmp.optInt("unallocated_cases",0)>0;ArrayList<String>issues=new ArrayList<>();
+        if(cmp.optInt("unallocated_cases",0)>0)issues.add(tr("Unallocated cases: ","Cajas no asignadas: ")+cmp.optInt("unallocated_cases"));
         if(dangerous)issues.add(tr("Too many cases: ","Demasiadas cajas: ")+scanned+" / "+ordered);
         for(int i=0;i<shipmentSkuLines.length();i++){JSONObject line=shipmentSkuLines.optJSONObject(i);if(line!=null&&(line.optBoolean("over",false)||line.optBoolean("extra",false))){dangerous=true;issues.add("SKU "+line.optString("sku")+": "+line.optInt("loaded")+" / "+line.optInt("required"));}}
         if(ship!=null){Iterator<String>it=ship.keys();while(it.hasNext()){String v=it.next();int s=ship.optInt(v),p=po==null?0:po.optInt(v,0);if(p==0||s>p){dangerous=true;issues.add(v+": "+s+" / "+p);}}}
@@ -395,7 +410,16 @@ public class MainActivity extends Activity {
     void showOrders(JSONArray a){
         if(a==null||a.length()==0){error(tr("No open orders found","No se encontraron pedidos abiertos"));return;}
         String[] names=new String[a.length()];for(int i=0;i<a.length();i++){JSONObject o=a.optJSONObject(i);names[i]=o.optString("po")+" · "+o.optString("customer_name");}
-        new AlertDialog.Builder(this).setTitle(tr("Select order","Seleccione el pedido")).setItems(names,(d,w)->{selectedOrder=a.optJSONObject(w);shipmentSkuLines=new JSONArray();call(map("action","shipment_set_order","shipment_id",shipmentId,"order_id",selectedOrder.optString("id"),"po",selectedOrder.optString("po"),"customer_name",selectedOrder.optString("customer_name")),j->{step=Step.SHIP_SCAN;render();checkPoAfterScan(false);});}).setNegativeButton(tr("Cancel","Cancelar"),null).show();
+        boolean[] checked=new boolean[a.length()];
+        AlertDialog dlg=new AlertDialog.Builder(this).setTitle(tr("Select one or more POs","Seleccione uno o más PO"))
+            .setMultiChoiceItems(names,checked,(d,w,on)->checked[w]=on)
+            .setPositiveButton(tr("Continue","Continuar"),null).setNegativeButton(tr("Cancel","Cancelar"),null).create();
+        dlg.setOnShowListener(x->dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            ArrayList<String>ids=new ArrayList<>();selectedOrders=new JSONArray();for(int i=0;i<a.length();i++)if(checked[i]){JSONObject o=a.optJSONObject(i);if(o!=null){ids.add(o.optString("id"));selectedOrders.put(o);}}
+            if(ids.isEmpty()){Toast.makeText(this,tr("Select at least one PO","Seleccione al menos un PO"),Toast.LENGTH_SHORT).show();return;}
+            selectedOrder=selectedOrders.optJSONObject(0);multiPo=selectedOrders.length()>1;shipmentSkuLines=new JSONArray();dlg.dismiss();
+            call(map("action","shipment_set_orders","shipment_id",shipmentId,"order_ids",android.text.TextUtils.join(",",ids)),j->{step=Step.SHIP_SCAN;JSONObject m=j.optJSONObject("multi");if(m!=null)applyComparison(m,false);render();});
+        }));dlg.show();
     }
 
     interface Success{void run(JSONObject j);}
