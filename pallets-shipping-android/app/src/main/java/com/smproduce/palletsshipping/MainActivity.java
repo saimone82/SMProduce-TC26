@@ -97,7 +97,7 @@ public class MainActivity extends Activity {
         switch(step){
             case HOME: heading(tr("What would you like to do?","¿Qué desea hacer?"),tr("Choose one operation","Seleccione una operación"));
                 choice("Palletizing","Paletización",v->{step=Step.PALLET_MODE;render();});
-                choice("Shipping","Envíos",v->newShipment()); break;
+                choice("Shipping","Envíos",v->{step=Step.SHIP_MODE;render();}); break;
             case PALLET_MODE: heading(tr("Palletizing","Paletización"),tr("What would you like to do?","¿Qué desea hacer?"));
                 choice("New Pallet","Nuevo pallet",v->newPallet());
                 choice("Resume Partial Pallet","Continuar pallet parcial",v->{step=Step.PALLET_RESUME;render();}); break;
@@ -106,7 +106,9 @@ public class MainActivity extends Activity {
             case PALLET_FINISH: heading(tr("What would you like to do?","¿Qué desea hacer?"),palletId+" · "+caseCount+" "+tr("cases","cajas"));
                 choice("Close as Complete","Cerrar como completo",v->finishPallet(true));
                 choice("Close as Partial","Cerrar como parcial",v->finishPallet(false)); break;
-            case SHIP_MODE: newShipment(); break;
+            case SHIP_MODE: heading(tr("Shipping","Envíos"),tr("What would you like to do?","¿Qué desea hacer?"));
+                choice("New Shipment","Nuevo envío",v->newShipment());
+                choice("Continue Saved Shipment","Continuar envío guardado",v->loadOpenShipments()); break;
             case SHIP_RESUME: scanQuestion(tr("Scan the open shipment label","Escanee la etiqueta del envío abierto"),tr("The shipment must still be open","El envío debe estar abierto")); break;
             case SHIP_ORDER: orderScreen(); break;
             case SHIP_SCAN: scanScreen(false); break;
@@ -205,7 +207,36 @@ public class MainActivity extends Activity {
     }
     void resumePallet(String id){if(!online){error(tr("Connect to verify the partial pallet","Conéctese para verificar el pallet parcial"));return;}call(map("action","pallet_resume","pallet_id",id),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");loadCases(j);casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();});}
     void newShipment(){if(busy)return;if(!online){error(tr("Connect to create a shipment","Conéctese para crear un envío"));return;}call(map("action","shipment_new"),j->{shipmentId=j.optString("shipment_id");step=Step.SHIP_ORDER;render();searchOrders("");});}
-    void resumeShipment(String id){if(!online){error(tr("Connect to verify the shipment","Conéctese para verificar el envío"));return;}call(map("action","shipment_resume","shipment_id",id),j->{shipmentId=j.optString("shipment_id");palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");step=Step.SHIP_SCAN;render();});}
+    void resumeShipment(String id){resumeShipment(id,null);}
+    void resumeShipment(String id,JSONObject saved){
+        if(!online){error(tr("Connect to verify the shipment","Conéctese para verificar el envío"));return;}
+        call(map("action","shipment_resume","shipment_id",id),j->{
+            shipmentId=j.optString("shipment_id");palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");
+            JSONObject ship=j.optJSONObject("shipment");
+            if(saved!=null)ship=saved;
+            if(ship!=null&&ship.optInt("order_id",0)>0){
+                selectedOrder=new JSONObject();
+                try{selectedOrder.put("id",ship.optInt("order_id"));selectedOrder.put("po",ship.optString("po"));selectedOrder.put("customer_name",ship.optString("customer_name"));}catch(JSONException ignored){}
+            }else selectedOrder=null;
+            shipmentSkuLines=new JSONArray();shipmentMismatch=false;shipmentCompareMessage="";step=Step.SHIP_SCAN;render();
+            if(selectedOrder!=null)checkPoAfterScan(false);
+        });
+    }
+    void loadOpenShipments(){
+        if(!online){error(tr("Connect to load saved shipments","Conéctese para cargar los envíos guardados"));return;}
+        call(map("action","shipment_open_list"),j->showOpenShipments(j.optJSONArray("shipments")));
+    }
+    void showOpenShipments(JSONArray a){
+        if(a==null||a.length()==0){error(tr("No saved open shipments found","No se encontraron envíos abiertos guardados"));return;}
+        String[] names=new String[a.length()];
+        for(int i=0;i<a.length();i++){
+            JSONObject s=a.optJSONObject(i);String po=s==null?"":s.optString("po");String customer=s==null?"":s.optString("customer_name");
+            names[i]=(s==null?"":s.optString("shipment_id"))+" · "+(po.isEmpty()?tr("No PO","Sin PO"):po)+(customer.isEmpty()?"":" · "+customer)+"\n"+(s==null?0:s.optInt("pallet_count"))+" "+tr("pallets","pallets")+" · "+(s==null?0:s.optInt("cases_count"))+" "+tr("cases","cajas")+" · "+(s==null?"":s.optString("created_at"));
+        }
+        new AlertDialog.Builder(this).setTitle(tr("Continue saved shipment","Continuar envío guardado"))
+            .setItems(names,(d,w)->{JSONObject s=a.optJSONObject(w);if(s!=null)resumeShipment(s.optString("shipment_id"),s);})
+            .setNegativeButton(tr("Cancel","Cancelar"),null).show();
+    }
 
     void onScan(String raw){
         String code=raw==null?"":raw.trim();if(code.isEmpty()||busy)return;
