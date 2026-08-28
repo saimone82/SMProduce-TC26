@@ -21,7 +21,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
-    enum Step { HOME, PALLET_MODE, PALLET_RESUME, PALLET_SCAN, PALLET_FINISH,
+    enum Step { HOME, PALLET_MODE, PALLET_RESUME, PALLET_SCAN, PALLET_FINISH, PALLET_EDIT_ID, PALLET_EDIT_CASES,
                 SHIP_MODE, SHIP_RESUME, SHIP_ORDER, SHIP_SCAN, SHIP_FINISH, DONE }
     Step step = Step.HOME;
     boolean spanish = false, online = false, busy = false;
@@ -33,6 +33,8 @@ public class MainActivity extends Activity {
     String scanErrorMessage = "";
     JSONArray shipmentSkuLines = new JSONArray();
     boolean casesExpanded = false;
+    boolean palletEditRemove = false;
+    String palletEditPassword = "";
     final ArrayList<String> scannedCases = new ArrayList<>();
     final ExecutorService io = Executors.newSingleThreadExecutor();
     final ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90);
@@ -91,7 +93,7 @@ public class MainActivity extends Activity {
         back.setText(tr("Back","Atrás")); next.setText(tr("Next","Siguiente"));
         back.setVisibility(step==Step.HOME?View.INVISIBLE:View.VISIBLE); next.setVisibility(View.GONE);
         int current=1,total=1;
-        if(step.name().startsWith("PALLET")){ total=4; current=step==Step.PALLET_MODE?1:step==Step.PALLET_RESUME?2:step==Step.PALLET_SCAN?3:4; }
+        if(step.name().startsWith("PALLET")){ total=4; current=step==Step.PALLET_MODE?1:(step==Step.PALLET_RESUME||step==Step.PALLET_EDIT_ID)?2:(step==Step.PALLET_SCAN||step==Step.PALLET_EDIT_CASES)?3:4; }
         if(step.name().startsWith("SHIP")){ total=5; current=step==Step.SHIP_MODE?1:step==Step.SHIP_RESUME?2:step==Step.SHIP_ORDER?3:step==Step.SHIP_SCAN?4:5; }
         progress.setText(total==1?"":tr("Step "+current+" of "+total,"Paso "+current+" de "+total));
         switch(step){
@@ -100,8 +102,11 @@ public class MainActivity extends Activity {
                 choice("Shipping","Envíos",v->{step=Step.SHIP_MODE;render();}); break;
             case PALLET_MODE: heading(tr("Palletizing","Paletización"),tr("What would you like to do?","¿Qué desea hacer?"));
                 choice("New Pallet","Nuevo pallet",v->newPallet());
-                choice("Resume Partial Pallet","Continuar pallet parcial",v->{step=Step.PALLET_RESUME;render();}); break;
+                choice("Resume Partial Pallet","Continuar pallet parcial",v->{step=Step.PALLET_RESUME;render();});
+                Button editPallet=choice("Modify Existing Pallet","Modificar pallet existente",v->requestPalletEditPassword());editPallet.setBackgroundColor(Color.rgb(180,83,9)); break;
             case PALLET_RESUME: scanQuestion(tr("Scan the partial pallet label","Escanee la etiqueta del pallet parcial"),tr("The pallet must have PARTIAL status","El pallet debe tener estado PARCIAL")); break;
+            case PALLET_EDIT_ID: scanQuestion(tr("Scan the pallet label","Escanee la etiqueta del pallet"),tr("The pallet will be opened for protected editing","El pallet se abrirá para una modificación protegida")); break;
+            case PALLET_EDIT_CASES: palletEditScreen(); break;
             case PALLET_SCAN: scanScreen(true); break;
             case PALLET_FINISH: heading(tr("What would you like to do?","¿Qué desea hacer?"),palletId+" · "+caseCount+" "+tr("cases","cajas"));
                 choice("Close as Complete","Cerrar como completo",v->finishPallet(true));
@@ -123,6 +128,21 @@ public class MainActivity extends Activity {
 
     void heading(String a,String b){ title=tv(a,27,Color.WHITE);title.setGravity(Gravity.CENTER);title.setTypeface(null,1);body.addView(title,new LinearLayout.LayoutParams(-1,-2)); subtitle=tv(b,16,Color.rgb(150,170,190));subtitle.setGravity(Gravity.CENTER);body.addView(subtitle,new LinearLayout.LayoutParams(-1,-2));addSpace(28); }
     void scanQuestion(String q,String hint){ heading(q,hint); manual=new EditText(this);manual.setHint(tr("Scan or type ID","Escanee o escriba el ID"));manual.setTextColor(Color.WHITE);manual.setHintTextColor(Color.GRAY);manual.setSingleLine();manual.setInputType(InputType.TYPE_CLASS_TEXT);body.addView(manual,new LinearLayout.LayoutParams(-1,dp(58)));addSpace(12);next.setVisibility(View.VISIBLE);next.setText(tr("Continue","Continuar")); }
+
+    void palletEditScreen(){
+        heading(tr("Modify pallet","Modificar pallet"),palletId);
+        counter=tv(caseCount+" "+tr("CASES","CAJAS"),34,Color.rgb(102,187,106));counter.setGravity(Gravity.CENTER);counter.setTypeface(null,1);body.addView(counter);
+        TextView mode=tv(palletEditRemove?tr("REMOVE MODE — scan a case to remove it","MODO ELIMINAR — escanee una caja para eliminarla"):tr("ADD MODE — scan a case to add it","MODO AÑADIR — escanee una caja para añadirla"),17,palletEditRemove?Color.rgb(248,113,113):Color.rgb(134,239,172));mode.setGravity(Gravity.CENTER);body.addView(mode);
+        addSpace(12);
+        Button add=choice("Add Cases","Añadir cajas",v->{palletEditRemove=false;render();});add.setBackgroundColor(palletEditRemove?Color.rgb(52,65,85):Color.rgb(22,101,52));
+        Button remove=choice("Remove Cases","Eliminar cajas",v->{palletEditRemove=true;render();});remove.setBackgroundColor(palletEditRemove?Color.rgb(185,28,28):Color.rgb(52,65,85));
+        TextView listTitle=tv(tr("CASES ON PALLET","CAJAS EN EL PALLET"),13,Color.LTGRAY);listTitle.setTypeface(null,1);body.addView(listTitle);
+        LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);list.setPadding(dp(14),dp(8),dp(14),dp(8));list.setBackgroundColor(Color.rgb(19,32,51));
+        if(scannedCases.isEmpty())list.addView(tv(tr("No cases on this pallet","No hay cajas en este pallet"),14,Color.LTGRAY));
+        else for(int i=scannedCases.size()-1;i>=0;i--)list.addView(tv("• "+scannedCases.get(i),15,Color.WHITE));
+        body.addView(list,new LinearLayout.LayoutParams(-1,-2));addSpace(14);
+        Button save=choice("Save, Close and Print Label","Guardar, cerrar e imprimir etiqueta",v->finishEditedPallet());save.setBackgroundColor(Color.rgb(25,118,210));
+    }
 
     void scanScreen(boolean cases){
         String id=cases?palletId:shipmentId;
@@ -180,6 +200,7 @@ public class MainActivity extends Activity {
 
     void goNext(){
         if(step==Step.PALLET_RESUME){String id=text();if(id.isEmpty()){error(tr("Scan the pallet label","Escanee la etiqueta"));return;}resumePallet(id);}
+        else if(step==Step.PALLET_EDIT_ID){String id=text();if(id.isEmpty()){error(tr("Scan the pallet label","Escanee la etiqueta"));return;}openPalletForEdit(id);}
         else if(step==Step.PALLET_SCAN){step=Step.PALLET_FINISH;render();}
         else if(step==Step.SHIP_RESUME){String id=text();if(id.isEmpty()){error(tr("Scan the shipment label","Escanee la etiqueta del envío"));return;}resumeShipment(id);}
         else if(step==Step.SHIP_SCAN){step=Step.SHIP_FINISH;render();}
@@ -187,6 +208,8 @@ public class MainActivity extends Activity {
     void goBack(){
         if(step==Step.PALLET_MODE||step==Step.SHIP_MODE){step=Step.HOME;}
         else if(step==Step.PALLET_RESUME){step=Step.PALLET_MODE;}
+        else if(step==Step.PALLET_EDIT_ID){palletEditPassword="";step=Step.PALLET_MODE;}
+        else if(step==Step.PALLET_EDIT_CASES){error(tr("Save and close the pallet before leaving","Guarde y cierre el pallet antes de salir"));return;}
         else if(step==Step.PALLET_SCAN){step=Step.PALLET_MODE;}
         else if(step==Step.PALLET_FINISH){step=Step.PALLET_SCAN;}
         else if(step==Step.SHIP_RESUME){step=Step.SHIP_MODE;}
@@ -206,6 +229,30 @@ public class MainActivity extends Activity {
         call(map("action","pallet_new"),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");scannedCases.clear();casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();});
     }
     void resumePallet(String id){if(!online){error(tr("Connect to verify the partial pallet","Conéctese para verificar el pallet parcial"));return;}call(map("action","pallet_resume","pallet_id",id),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");loadCases(j);casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();});}
+    void requestPalletEditPassword(){
+        final EditText input=new EditText(this);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        new AlertDialog.Builder(this).setTitle(tr("Password required","Contraseña requerida")).setView(input)
+            .setPositiveButton(tr("Continue","Continuar"),(d,w)->{
+                String pwd=input.getText().toString();
+                call(map("action","verify_skip_po_password","password",pwd),j->{palletEditPassword=pwd;step=Step.PALLET_EDIT_ID;render();});
+            }).setNegativeButton(tr("Cancel","Cancelar"),null).show();
+    }
+    void openPalletForEdit(String id){
+        if(!online){error(tr("Connect to modify a pallet","Conéctese para modificar un pallet"));return;}
+        call(map("action","pallet_edit_open","pallet_id",id,"password",palletEditPassword),j->{palletEditPassword="";palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");loadCases(j);palletEditRemove=false;step=Step.PALLET_EDIT_CASES;render();});
+    }
+    void editPalletCase(String code){
+        if(!online){error(tr("Editing requires a connection","La modificación requiere conexión"));return;}
+        if(palletEditRemove){
+            call(map("action","pallet_remove_case","pallet_id",palletId,"case_serial",code),j->{caseCount=j.optInt("cases_count");loadCases(j);ok(tr("Case removed: ","Caja eliminada: ")+code);render();});
+        }else{
+            call(map("action","pallet_scan_case","pallet_id",palletId,"case_serial",code),j->{caseCount=j.optInt("cases_count");loadCases(j);ok(tr("Case added: ","Caja añadida: ")+code);render();});
+        }
+    }
+    void finishEditedPallet(){
+        if(!online){error(tr("Connect before closing the pallet","Conéctese antes de cerrar el pallet"));return;}
+        call(map("action","pallet_close","pallet_id",palletId),j->{if(j.optInt("label_printed",0)!=1){error(tr("Pallet saved, but the label was not sent. Check the printer selected in Pallets Manage.","Pallet guardado, pero la etiqueta no fue enviada. Compruebe la impresora seleccionada en Pallets Manage."));return;}done(tr("Pallet updated, closed and sent to print","Pallet actualizado, cerrado y enviado a imprimir"));});
+    }
     void newShipment(){if(busy)return;if(!online){error(tr("Connect to create a shipment","Conéctese para crear un envío"));return;}call(map("action","shipment_new"),j->{shipmentId=j.optString("shipment_id");step=Step.SHIP_ORDER;render();searchOrders("");});}
     void resumeShipment(String id){resumeShipment(id,null);}
     void resumeShipment(String id,JSONObject saved){
@@ -247,6 +294,8 @@ public class MainActivity extends Activity {
         if(code.equals(lastScanCode)&&now-lastScanAt<1500){if(step==Step.PALLET_SCAN&&!online)showDuplicateCase();return;}
         lastScanCode=code;lastScanAt=now;
         if(step==Step.PALLET_RESUME){manual.setText(code);resumePallet(code);return;}
+        if(step==Step.PALLET_EDIT_ID){manual.setText(code);openPalletForEdit(code);return;}
+        if(step==Step.PALLET_EDIT_CASES){editPalletCase(code);return;}
         if(step==Step.SHIP_RESUME){manual.setText(code);resumeShipment(code);return;}
         if(step==Step.PALLET_SCAN){scanCase(code);return;}
         if(step==Step.SHIP_SCAN){scanPallet(code);return;}
@@ -297,7 +346,7 @@ public class MainActivity extends Activity {
         });
     }
     void done(String msg){step=Step.DONE;render();subtitle.setText(msg);}
-    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;shipmentMismatch=false;shipmentCompareMessage="";scanErrorMessage="";shipmentSkuLines=new JSONArray();casesExpanded=false;scannedCases.clear();step=Step.HOME;render();}
+    void resetHome(){palletId="";shipmentId="";caseCount=palletCount=shipmentCases=0;selectedOrder=null;shipmentMismatch=false;shipmentCompareMessage="";scanErrorMessage="";shipmentSkuLines=new JSONArray();casesExpanded=false;palletEditRemove=false;palletEditPassword="";scannedCases.clear();step=Step.HOME;render();}
 
     void searchOrders(String q){ if(!online){error(tr("Order search requires connection","La búsqueda requiere conexión"));return;}call(map("action","order_search","q",q),j->showOrders(j.optJSONArray("orders"))); }
     void requestSkipPassword(){
