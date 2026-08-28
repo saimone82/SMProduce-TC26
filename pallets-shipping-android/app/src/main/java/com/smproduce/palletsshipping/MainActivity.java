@@ -253,10 +253,14 @@ public class MainActivity extends Activity {
         performShipmentClose();
     }
     void performShipmentClose(){
-        call(map("action","shipment_close","shipment_id",shipmentId),closed->{
+        Map<String,String> closeData=map("action","shipment_close","shipment_id",shipmentId);
+        if(selectedOrder!=null)closeData.put("order_id",selectedOrder.optString("id"));
+        call(closeData,closed->{
+            final boolean orderFailed=closed.optInt("order_expected",0)==1&&closed.optInt("order_closed",0)!=1;
             callUrl(BuildConfig.SHIPPING_API_URL,map("action","bol","shipment_id",shipmentId),bol->{
                 callUrl(BuildConfig.SHIPPING_API_URL,map("action","queue_bol_print","shipment_id",shipmentId),printed->{
-                    done(tr("Shipment closed. Label and BOL sent to print","Envío cerrado. Etiqueta y BOL enviados a imprimir"));
+                    if(orderFailed)done(tr("Shipment closed and printed, but the PO could not be set to SHIPPED. Check the order in the webapp.","Envío cerrado e impreso, pero el PO no pudo marcarse como SHIPPED. Compruebe el pedido en la webapp."));
+                    else done(tr("Shipment closed, PO set to SHIPPED. Label and BOL sent to print","Envío cerrado, PO marcado como SHIPPED. Etiqueta y BOL enviados a imprimir"));
                 });
             });
         });
