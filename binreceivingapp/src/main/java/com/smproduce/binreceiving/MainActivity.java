@@ -18,6 +18,7 @@ import java.util.*;
 public class MainActivity extends Activity {
     final int BG=Color.rgb(7,17,31), PANEL=Color.rgb(13,29,48), BLUE=Color.rgb(25,118,210), GREEN=Color.rgb(22,163,74), RED=Color.rgb(185,28,28), GRAY=Color.rgb(71,85,105), ORANGE=Color.rgb(217,119,6);
     static final String PREFS="bins", CACHE_GROWERS="cache_growers", CACHE_TYPES="cache_types", CACHE_VARIETIES="cache_varieties", QUEUE_KEY="offline_queue";
+    static final String EDIT_PASSWORD="Apples2424";
     LinearLayout root,body,bar; TextView step,status; Button back,home,lang;
     boolean es=false; String mode="",grower="",type="",variety="",lot="",currentScreen="home"; int qty=0;
     ArrayList<String> growers=new ArrayList<>(),types=new ArrayList<>(),varieties=new ArrayList<>();
@@ -45,7 +46,10 @@ public class MainActivity extends Activity {
         root.addView(bar,new LinearLayout.LayoutParams(-1,-2));
         step=text("",15);step.setTextColor(Color.rgb(148,163,184));root.addView(step,new LinearLayout.LayoutParams(-1,dp(38)));
         body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setGravity(Gravity.CENTER);body.setPadding(dp(38),dp(16),dp(38),dp(18));root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
-        status=text("",13);status.setTextColor(Color.rgb(203,213,225));root.addView(status,new LinearLayout.LayoutParams(-1,dp(34)));setContentView(root);
+        LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.CENTER_VERTICAL);footer.setPadding(dp(8),0,dp(8),0);footer.setBackgroundColor(PANEL);
+        Button fullList=button(t("FULL LIST","LISTA LLENOS"),11);fullList.setOnClickListener(v->askListPassword("full"));footer.addView(fullList,new LinearLayout.LayoutParams(dp(105),dp(34)));
+        Button emptyList=button(t("EMPTY LIST","LISTA VACÍOS"),11);emptyList.setOnClickListener(v->askListPassword("empty"));LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(dp(112),dp(34));ep.setMargins(dp(5),0,0,0);footer.addView(emptyList,ep);
+        status=text("",13);status.setTextColor(Color.rgb(203,213,225));footer.addView(status,new LinearLayout.LayoutParams(0,dp(34),1));root.addView(footer,new LinearLayout.LayoutParams(-1,dp(38)));setContentView(root);
     }
     void setNav(boolean canBack){back.setVisibility(canBack?View.VISIBLE:View.INVISIBLE);home.setVisibility(canBack?View.VISIBLE:View.INVISIBLE);}
     void registerNetworkWatcher(){try{cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);netCallback=new ConnectivityManager.NetworkCallback(){@Override public void onAvailable(Network n){ui.post(()->{updateStatus();refreshPresetsAsync();syncQueueAsync();});}@Override public void onLost(Network n){ui.post(()->updateStatus());}};cm.registerDefaultNetworkCallback(netCallback);}catch(Exception ignored){}}
@@ -74,6 +78,36 @@ public class MainActivity extends Activity {
     void saveFast(boolean wantPrint){String action=mode.equals("empty")?"save_empty":"save_full";enqueue(action,currentPayload(wantPrint),wantPrint);showQueued(wantPrint);if(isOnline())syncQueueAsync();}
     void showQueued(boolean wantPrint){currentScreen="done";clear();setNav(false);step.setText(t("SAVED","GUARDADO"));question(t("RECORD SAVED","REGISTRO GUARDADO"));String msg;if(isOnline())msg=wantPrint?t("Saved immediately. Sending and printing in background.","Guardado inmediatamente. Enviando e imprimiendo en segundo plano."):t("Saved immediately. Sending to the server in background.","Guardado inmediatamente. Enviando al servidor en segundo plano.");else msg=wantPrint?t("Saved on the tablet. It will sync and print automatically when internet returns.","Guardado en la tableta. Se sincronizará e imprimirá cuando vuelva internet."):t("Saved on the tablet. It will sync automatically when internet returns.","Guardado en la tableta. Se sincronizará cuando vuelva internet.");TextView x=text(msg,20);x.setTextColor(isOnline()?Color.rgb(134,239,172):Color.rgb(253,224,71));x.setPadding(dp(30),0,dp(30),dp(14));body.addView(x);big(t("NEW RECEIVING","NUEVA RECEPCIÓN"),GREEN,v->showMode());updateStatus();}
 
+    void askListPassword(String kind){
+        if(!isOnline()){Toast.makeText(this,t("Internet is required to edit records","Se requiere internet para editar registros"),Toast.LENGTH_LONG).show();return;}
+        EditText e=input(false);e.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);e.setHint(t("Password","Contraseña"));
+        new AlertDialog.Builder(this).setTitle(t("Protected records","Registros protegidos")).setView(e)
+            .setNegativeButton(t("CANCEL","CANCELAR"),null).setPositiveButton("OK",(d,w)->{
+                String password=e.getText().toString();if(!EDIT_PASSWORD.equals(password)){Toast.makeText(this,t("Wrong password","Contraseña incorrecta"),Toast.LENGTH_SHORT).show();return;}loadRecords(kind,password);
+            }).show();
+    }
+    void loadRecords(String kind,String password){
+        currentScreen="record_list";clear();setNav(true);step.setText(kind.equals("full")?t("FULL BINS LIST","LISTA BINS LLENOS"):t("EMPTY BINS LIST","LISTA BINS VACÍOS"));question(t("Loading records…","Cargando registros…"));
+        new Thread(()->{try{LinkedHashMap<String,String> p=new LinkedHashMap<>();p.put("kind",kind);p.put("edit_password",password);JSONObject r=req("list_records",p);if(!r.optBoolean("ok",false))throw new IOException(r.optString("error","Cannot load records"));JSONArray a=r.optJSONArray("records");ui.post(()->showRecordList(kind,password,a==null?new JSONArray():a));}catch(Exception ex){ui.post(()->{Toast.makeText(this,ex.getMessage(),Toast.LENGTH_LONG).show();showMode();});}}).start();
+    }
+    void showRecordList(String kind,String password,JSONArray records){
+        currentScreen="record_list";clear();setNav(true);question(kind.equals("full")?t("FULL BINS — TAP TO EDIT","BINS LLENOS — TOQUE PARA EDITAR"):t("EMPTY BINS — TAP TO EDIT","BINS VACÍOS — TOQUE PARA EDITAR"));
+        ScrollView sv=new ScrollView(this);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);sv.addView(list);body.addView(sv,new LinearLayout.LayoutParams(-1,0,1));
+        for(int i=0;i<records.length();i++){JSONObject r=records.optJSONObject(i);if(r==null)continue;String line="#"+r.optString("id")+"  "+r.optString("date")+"  •  "+r.optString("grower")+"  •  "+r.optString("type")+(kind.equals("full")?"  •  "+r.optString("variety")+"  •  "+r.optString("lot"):"")+"  •  "+r.optString("quantity")+" bins";Button b=button(line,16);b.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);b.setOnClickListener(v->editRecord(kind,password,r));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(62));lp.setMargins(0,dp(3),0,dp(3));list.addView(b,lp);}
+        if(records.length()==0)list.addView(text(t("No records found","No se encontraron registros"),20));
+    }
+    void editRecord(String kind,String password,JSONObject r){
+        LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);form.setPadding(dp(18),0,dp(18),0);
+        EditText eg=editField(t("Grower","Grower"),r.optString("grower"),false),et=editField(t("Bin type","Tipo de bin"),r.optString("type"),false),ev=editField(t("Variety","Variedad"),r.optString("variety"),false),el=editField(t("Lot","Lote"),r.optString("lot"),false),ed=editField(t("Date YYYY-MM-DD","Fecha AAAA-MM-DD"),r.optString("date"),false),eq=editField(t("Quantity","Cantidad"),r.optString("quantity"),true);
+        form.addView(eg);form.addView(et);if(kind.equals("full")){form.addView(ev);form.addView(el);}form.addView(ed);form.addView(eq);ScrollView wrap=new ScrollView(this);wrap.addView(form);
+        AlertDialog dlg=new AlertDialog.Builder(this).setTitle(t("Edit record #","Editar registro #")+r.optString("id")).setView(wrap).setNegativeButton(t("CANCEL","CANCELAR"),null).setPositiveButton(t("SAVE","GUARDAR"),null).create();
+        dlg.setOnShowListener(x->dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String gs=eg.getText().toString().trim(),ts=et.getText().toString().trim(),vs=ev.getText().toString().trim(),ls=el.getText().toString().trim(),ds=ed.getText().toString().trim(),qs=eq.getText().toString().trim();if(gs.isEmpty()||ts.isEmpty()||ds.isEmpty()||qs.isEmpty()||(kind.equals("full")&&vs.isEmpty())){Toast.makeText(this,t("Complete all required fields","Complete todos los campos requeridos"),Toast.LENGTH_SHORT).show();return;}dlg.dismiss();updateRecord(kind,password,r.optString("id"),gs,ts,vs,ls,ds,qs);}));dlg.show();
+    }
+    EditText editField(String hint,String value,boolean numeric){EditText e=input(numeric);e.setHint(hint);e.setText(value);e.setTextSize(20);e.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);e.setPadding(dp(12),0,dp(12),0);e.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(58)));return e;}
+    void updateRecord(String kind,String password,String id,String gs,String ts,String vs,String ls,String ds,String qs){
+        clear();question(t("Saving changes…","Guardando cambios…"));new Thread(()->{try{LinkedHashMap<String,String> p=new LinkedHashMap<>();p.put("kind",kind);p.put("id",id);p.put("grower",gs);p.put("type",ts);p.put("variety",vs);p.put("lot",ls);p.put("date",ds);p.put("quantity",qs);p.put("edit_password",password);JSONObject result=req("update_record",p);if(!result.optBoolean("ok",false))throw new IOException(result.optString("error","Update failed"));ui.post(()->{Toast.makeText(this,t("Record updated","Registro actualizado"),Toast.LENGTH_SHORT).show();loadRecords(kind,password);});}catch(Exception ex){ui.post(()->{Toast.makeText(this,ex.getMessage(),Toast.LENGTH_LONG).show();loadRecords(kind,password);});}}).start();
+    }
+
     synchronized void enqueue(String action,Map<String,String> data,boolean wantPrint){try{JSONArray q=getQueue();JSONObject item=new JSONObject();String id=UUID.randomUUID().toString();item.put("id",id);item.put("action",action);item.put("print",wantPrint);item.put("createdAt",System.currentTimeMillis());JSONObject d=new JSONObject();for(Map.Entry<String,String> e:data.entrySet())d.put(e.getKey(),e.getValue());d.put("client_request_id",id);item.put("data",d);q.put(item);saveQueue(q);}catch(Exception ignored){}}
     synchronized JSONArray getQueue(){try{return new JSONArray(prefs.getString(QUEUE_KEY,"[]"));}catch(Exception e){return new JSONArray();}}
     synchronized void saveQueue(JSONArray q){prefs.edit().putString(QUEUE_KEY,q.toString()).apply();}
@@ -88,7 +122,7 @@ public class MainActivity extends Activity {
     String read(InputStream in)throws Exception{if(in==null)return"";BufferedReader r=new BufferedReader(new InputStreamReader(in,StandardCharsets.UTF_8));StringBuilder b=new StringBuilder();String l;while((l=r.readLine())!=null)b.append(l);return b.toString();}
     ArrayList<String> list(JSONArray a){ArrayList<String>x=new ArrayList<>();if(a!=null)for(int i=0;i<a.length();i++){String s=a.optString(i,"").trim();if(!s.isEmpty())x.add(s);}return x;}
 
-    void goBack(){switch(currentScreen){case "grower":showMode();break;case "add_grower":showGrower();break;case "type":showGrower();break;case "variety":showType();break;case "lot":showVariety();break;case "qty":if(mode.equals("empty"))showType();else showLot();break;case "confirm":showQty();break;default:showMode();}}
+    void goBack(){switch(currentScreen){case "grower":showMode();break;case "add_grower":showGrower();break;case "type":showGrower();break;case "variety":showType();break;case "lot":showVariety();break;case "qty":if(mode.equals("empty"))showType();else showLot();break;case "confirm":showQty();break;case "record_list":showMode();break;default:showMode();}}
     void redrawCurrent(){switch(currentScreen){case "grower":showGrower();break;case "add_grower":showAddGrower();break;case "type":showType();break;case "variety":showVariety();break;case "lot":showLot();break;case "qty":showQty();break;case "confirm":showConfirm();break;default:showMode();}}
     interface Pick{void go(String s);}void options(ArrayList<String> a,String selected,Pick p){ScrollView sv=new ScrollView(this);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);list.setGravity(Gravity.CENTER);sv.addView(list);body.addView(sv,new LinearLayout.LayoutParams(-1,0,1));for(String s:a){Button b=button((s.equals(selected)?"✓ ":"")+s,21);b.setBackgroundColor(s.equals(selected)?Color.rgb(30,64,175):PANEL);b.setOnClickListener(v->p.go(s));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(72));lp.setMargins(0,dp(4),0,dp(4));list.addView(b,lp);}if(a.isEmpty())list.addView(text(t("No presets available yet","No hay presets disponibles"),20));}
     void question(String s){TextView q=text(s,32);q.setTypeface(null,1);q.setPadding(0,0,0,dp(16));body.addView(q);}
