@@ -343,7 +343,10 @@ public class MainActivity extends Activity {
         if(selectedOrder!=null)closeData.put("order_id",selectedOrder.optString("id"));
         call(closeData,closed->{
             final boolean orderFailed=closed.optInt("order_expected",0)==1&&closed.optInt("order_closed",0)!=1;
-            if(multiPo){
+            // The server is authoritative: resumed shipments may contain PO
+            // assignments even when the local multiPo flag was not restored.
+            // Whenever at least one PO is assigned, use the per-PO generator.
+            if(closed.optInt("po_count",0)>0||selectedOrders.length()>0){
                 callUrl(BuildConfig.SHIPPING_API_URL,map("action","multi_bol","shipment_id",shipmentId),printed->{
                     int count=printed.optInt("bol_count",selectedOrders.length());
                     if(orderFailed)done(tr("Shipment closed and BOLs printed, but the POs could not all be set to SHIPPED.","Envío cerrado y BOL impresos, pero no todos los PO pudieron marcarse como SHIPPED."));
