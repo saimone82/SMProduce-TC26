@@ -46,10 +46,11 @@ public class MainActivity extends Activity {
         root.addView(bar,new LinearLayout.LayoutParams(-1,-2));
         step=text("",15);step.setTextColor(Color.rgb(148,163,184));root.addView(step,new LinearLayout.LayoutParams(-1,dp(38)));
         body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setGravity(Gravity.CENTER);body.setPadding(dp(38),dp(16),dp(38),dp(18));root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.CENTER_VERTICAL);footer.setPadding(dp(8),0,dp(8),0);footer.setBackgroundColor(PANEL);
-        Button fullList=button(t("FULL LIST","LISTA LLENOS"),11);fullList.setOnClickListener(v->askListPassword("full"));footer.addView(fullList,new LinearLayout.LayoutParams(dp(105),dp(34)));
-        Button emptyList=button(t("EMPTY LIST","LISTA VACÍOS"),11);emptyList.setOnClickListener(v->askListPassword("empty"));LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(dp(112),dp(34));ep.setMargins(dp(5),0,0,0);footer.addView(emptyList,ep);
-        status=text("",13);status.setTextColor(Color.rgb(203,213,225));footer.addView(status,new LinearLayout.LayoutParams(0,dp(34),1));root.addView(footer,new LinearLayout.LayoutParams(-1,dp(38)));setContentView(root);
+        LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);footer.setPadding(dp(10),dp(4),dp(10),dp(4));footer.setBackgroundColor(Color.rgb(10,23,40));
+        Button fullList=button(t("EDIT FULL BINS","EDITAR LLENOS"),15);fullList.setBackgroundColor(GREEN);fullList.setOnClickListener(v->askListPassword("full"));footer.addView(fullList,new LinearLayout.LayoutParams(dp(180),dp(52)));
+        Button emptyList=button(t("EDIT EMPTY BINS","EDITAR VACÍOS"),15);emptyList.setBackgroundColor(Color.rgb(14,116,144));emptyList.setOnClickListener(v->askListPassword("empty"));LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(dp(190),dp(52));ep.setMargins(dp(8),0,0,0);footer.addView(emptyList,ep);
+        root.addView(footer,new LinearLayout.LayoutParams(-1,dp(60)));
+        status=text("",13);status.setTextColor(Color.rgb(203,213,225));status.setBackgroundColor(PANEL);root.addView(status,new LinearLayout.LayoutParams(-1,dp(30)));setContentView(root);
     }
     void setNav(boolean canBack){back.setVisibility(canBack?View.VISIBLE:View.INVISIBLE);home.setVisibility(canBack?View.VISIBLE:View.INVISIBLE);}
     void registerNetworkWatcher(){try{cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);netCallback=new ConnectivityManager.NetworkCallback(){@Override public void onAvailable(Network n){ui.post(()->{updateStatus();refreshPresetsAsync();syncQueueAsync();});}@Override public void onLost(Network n){ui.post(()->updateStatus());}};cm.registerDefaultNetworkCallback(netCallback);}catch(Exception ignored){}}
