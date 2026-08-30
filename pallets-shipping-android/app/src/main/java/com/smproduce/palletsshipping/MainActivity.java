@@ -56,7 +56,7 @@ public class MainActivity extends Activity {
     String lastScanCode = "";
     long lastScanAt = 0;
     boolean probing = false;
-    boolean useFrontCamera = true;
+    boolean useFrontCamera = false;
     boolean cameraScreen = false;
     DecoratedBarcodeView barcodeView;
     final Handler healthHandler = new Handler(Looper.getMainLooper());
@@ -77,6 +77,7 @@ public class MainActivity extends Activity {
     void buildShell(){
         root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.rgb(11,22,34));
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(18),dp(12),dp(12),dp(12)); header.setBackgroundColor(Color.rgb(19,32,51));
+        back=button("Back",Color.rgb(52,65,85));back.setOnClickListener(v->goBack());header.addView(back,new LinearLayout.LayoutParams(dp(92),dp(52)));Space hs=new Space(this);header.addView(hs,new LinearLayout.LayoutParams(dp(10),1));
         LinearLayout htext = new LinearLayout(this); htext.setOrientation(LinearLayout.VERTICAL);
         TextView app = tv("Pallets / Shipping",20,Color.WHITE); app.setTypeface(null,1); htext.addView(app);
         network = tv("",12,Color.LTGRAY); htext.addView(network);
@@ -85,9 +86,8 @@ public class MainActivity extends Activity {
         root.addView(header);
         progress=tv("",12,Color.rgb(110,140,170)); progress.setPadding(dp(18),dp(12),dp(18),0); root.addView(progress);
         nav=new LinearLayout(this); nav.setPadding(dp(14),dp(10),dp(14),dp(14)); nav.setGravity(Gravity.CENTER);
-        back=button("Back",Color.rgb(52,65,85)); next=button("Next",Color.rgb(25,118,210));
-        back.setOnClickListener(v->goBack()); next.setOnClickListener(v->goNext());
-        nav.addView(back,new LinearLayout.LayoutParams(0,dp(56),1)); Space sp=new Space(this); nav.addView(sp,new LinearLayout.LayoutParams(dp(12),1)); nav.addView(next,new LinearLayout.LayoutParams(0,dp(56),1)); root.addView(nav);
+        next=button("Next",Color.rgb(25,118,210));next.setOnClickListener(v->goNext());
+        nav.addView(next,new LinearLayout.LayoutParams(-1,dp(56)));root.addView(nav);
         body=new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setGravity(Gravity.CENTER_HORIZONTAL); body.setPadding(dp(18),dp(16),dp(18),dp(12));
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.addView(body,new ScrollView.LayoutParams(-1,-2));
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
@@ -318,7 +318,7 @@ public class MainActivity extends Activity {
         if(manual!=null)manual.setText(code);
     }
     void addCameraButtons(){Button scan=choice("SCAN BARCODE","ESCANEAR CÓDIGO",v->launchCameraScan());scan.setTextSize(21);scan.setBackgroundColor(Color.rgb(198,40,40));Button toggle=choice(useFrontCamera?"Camera: FRONT":"Camera: REAR",useFrontCamera?"Cámara: FRONTAL":"Cámara: TRASERA",v->{useFrontCamera=!useFrontCamera;render();});toggle.setBackgroundColor(Color.rgb(52,65,85));}
-    int cameraId(boolean front){try{int wanted=front?Camera.CameraInfo.CAMERA_FACING_FRONT:Camera.CameraInfo.CAMERA_FACING_BACK;for(int i=0;i<Camera.getNumberOfCameras();i++){Camera.CameraInfo x=new Camera.CameraInfo();Camera.getCameraInfo(i,x);if(x.facing==wanted)return i;}}catch(Exception ignored){}return 0;}
+    int cameraId(boolean front){if(!front)return 0;try{for(int i=0;i<Camera.getNumberOfCameras();i++){Camera.CameraInfo x=new Camera.CameraInfo();Camera.getCameraInfo(i,x);if(x.facing==Camera.CameraInfo.CAMERA_FACING_FRONT)return i;}}catch(Exception ignored){}return 0;}
     void launchCameraScan(){if(checkSelfPermission(android.Manifest.permission.CAMERA)!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{android.Manifest.permission.CAMERA},7001);return;}showCamera();}
     void showCamera(){try{cameraScreen=true;LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);shell.setBackgroundColor(Color.BLACK);barcodeView=new DecoratedBarcodeView(this);barcodeView.setStatusText(tr("Place the barcode inside the frame","Coloque el código dentro del marco"));CameraSettings settings=new CameraSettings();settings.setRequestedCameraId(cameraId(useFrontCamera));barcodeView.getBarcodeView().setCameraSettings(settings);shell.addView(barcodeView,new LinearLayout.LayoutParams(-1,0,1));Button cancel=button(tr("CANCEL","CANCELAR"),Color.rgb(52,65,85));cancel.setOnClickListener(v->closeCamera());shell.addView(cancel,new LinearLayout.LayoutParams(-1,dp(70)));setContentView(shell);barcodeView.decodeSingle(new BarcodeCallback(){@Override public void barcodeResult(BarcodeResult result){if(result==null||result.getText()==null)return;String value=result.getText();runOnUiThread(()->{closeCamera();onScan(value);});}});barcodeView.resume();}catch(Exception e){cameraScreen=false;buildShell();render();error(tr("Camera unavailable","Cámara no disponible"));}}
     void closeCamera(){if(barcodeView!=null){try{barcodeView.pause();}catch(Exception ignored){}barcodeView=null;}cameraScreen=false;buildShell();render();}
