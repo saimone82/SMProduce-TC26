@@ -175,6 +175,43 @@ if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || !empty($_POST['ajax'])) {
         ]); exit;
     }
 
+    if ($action === 'mark_partial') {
+        $pid = trim($_POST['pallet_id'] ?? '');
+        if ($pid === '') { echo json_encode(['ok'=>0,'err'=>'Missing pallet_id']); exit; }
+
+        $oldStatus = ppr_pallet_status($dbx,$pid);
+        if ($oldStatus === '') {
+            echo json_encode(['ok'=>0,'err'=>'Pallet not found']); exit;
+        }
+        if ($oldStatus === 'PARTIAL') {
+            echo json_encode(['ok'=>1,'was_status'=>$oldStatus,'msg'=>"Pallet $pid is already partial"]); exit;
+        }
+        if (!in_array($oldStatus,['OPEN','CLOSED'],true)) {
+            echo json_encode(['ok'=>0,'err'=>"Pallet $pid cannot be changed to partial from status $oldStatus"]); exit;
+        }
+
+        if ($oldStatus === 'CLOSED' && !$requireClosedPassword($pid)) {
+            echo json_encode([
+                'ok'=>0,
+                'password_required'=>true,
+                'err'=>'Password required to change a CLOSED/complete pallet to PARTIAL.'
+            ]); exit;
+        }
+
+        $result = smp_tc26_partial_pallet($dbx,$pid,0,0);
+        if (empty($result['ok']) || strtoupper((string)($result['status'] ?? '')) !== 'PARTIAL') {
+            echo json_encode(['ok'=>0,'err'=>$result['err'] ?? 'Unable to change pallet to partial']); exit;
+        }
+
+        if ($dbx instanceof mysqli) ppr_generate_report($dbx,$pid);
+
+        echo json_encode([
+            'ok'=>1,
+            'was_status'=>$oldStatus,
+            'msg'=>"Pallet $pid changed to PARTIAL"
+        ]); exit;
+    }
+
     if ($action === 'delete') {
         $pid = trim($_POST['pallet_id'] ?? '');
         if ($pid === '') { echo json_encode(['ok'=>0,'err'=>'Missing pallet_id']); exit; }
@@ -466,6 +503,7 @@ async function loadList(silent=false) {
           <button class="btn btn-outline-secondary" title="Reprint" onclick="event.stopPropagation();openReprint('${esc(p.pallet_id)}')"><i class="bi bi-printer"></i></button>
           <button class="btn btn-outline-primary" title="View PDF Report" onclick="event.stopPropagation();viewReport('${esc(p.pallet_id)}')"><i class="bi bi-file-earmark-pdf"></i></button>
           <button class="btn btn-outline-success" title="Print Report" onclick="event.stopPropagation();printReport('${esc(p.pallet_id)}')"><i class="bi bi-file-earmark-arrow-up"></i></button>
+          ${(p.status==='OPEN'||p.status==='CLOSED')?`<button class="btn btn-outline-warning" title="Make Partial" onclick="event.stopPropagation();doMarkPartial('${esc(p.pallet_id)}','${esc(p.status)}')"><i class="bi bi-circle-half"></i></button>`:''}
           ${(p.status==='CLOSED'||p.status==='PARTIAL')?`<button class="btn btn-outline-warning" title="Reopen" onclick="event.stopPropagation();doReopen('${esc(p.pallet_id)}','${esc(p.status)}')"><i class="bi bi-unlock"></i></button>`:''}
           <button class="btn btn-outline-danger" title="Delete" onclick="event.stopPropagation();doDelete('${esc(p.pallet_id)}','${esc(p.status)}')"><i class="bi bi-trash"></i></button>
         </div>
@@ -493,6 +531,7 @@ async function showDetail(pid) {
         <button class="btn btn-outline-secondary btn-sm" onclick="openReprint('${esc(p.pallet_id)}')"><i class="bi bi-printer"></i></button>
         <button class="btn btn-outline-primary btn-sm" title="PDF Report" onclick="viewReport('${esc(p.pallet_id)}')"><i class="bi bi-file-earmark-pdf"></i></button>
         <button class="btn btn-outline-success btn-sm" title="Print Report" onclick="printReport('${esc(p.pallet_id)}')"><i class="bi bi-file-earmark-arrow-up"></i></button>
+        ${(p.status==='OPEN'||p.status==='CLOSED')?`<button class="btn btn-outline-warning btn-sm" onclick="doMarkPartial('${esc(p.pallet_id)}','${esc(p.status)}')"><i class="bi bi-circle-half me-1"></i>Make Partial</button>`:''}
         ${(p.status==='CLOSED'||p.status==='PARTIAL')?`<button class="btn btn-outline-warning btn-sm" onclick="doReopen('${esc(p.pallet_id)}','${esc(p.status)}')"><i class="bi bi-unlock me-1"></i>Reopen</button>`:''}
       </div>
     </div>
@@ -535,6 +574,31 @@ async function showDetail(pid) {
 
 function closedPalletPassword(action,pid){
   return prompt(`Password required to ${action} CLOSED pallet ${pid}:`) || '';
+}
+
+async function doMarkPartial(pid, knownStatus='') {
+  if (!confirm(`Change pallet ${pid} to PARTIAL?`)) return;
+
+  let admin_password='';
+  if((knownStatus||'').toUpperCase()==='CLOSED'){
+    admin_password=closedPalletPassword('change to PARTIAL',pid);
+    if(!admin_password)return;
+  }
+
+  let r=await api({action:'mark_partial',pallet_id:pid,admin_password});
+  if(!r.ok && r.password_required && !admin_password){
+    admin_password=closedPalletPassword('change to PARTIAL',pid);
+    if(!admin_password)return;
+    r=await api({action:'mark_partial',pallet_id:pid,admin_password});
+  }
+
+  if(r.ok){
+    await loadList();
+    await showDetail(pid);
+    alert(r.msg||'Pallet changed to PARTIAL');
+  }else{
+    alert(r.err||'Unable to change pallet to PARTIAL');
+  }
 }
 
 async function doReopen(pid, knownStatus='') {
