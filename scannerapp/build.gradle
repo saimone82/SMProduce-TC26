@@ -7,8 +7,8 @@ android {
         applicationId 'com.smproduce.scanner'
         minSdk 26
         targetSdk 35
-        versionCode 21
-        versionName '2.1.0-tablet'
+        versionCode 22
+        versionName '2.1.1-tablet'
         buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_app.php"'
         buildConfigField 'String', 'APP_TOKEN', '"SMPS_2026_8e04f770b72d4ceeb9d9"'
     }
