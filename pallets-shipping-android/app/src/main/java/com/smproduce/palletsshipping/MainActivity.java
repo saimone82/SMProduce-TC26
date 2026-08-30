@@ -20,8 +20,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import android.hardware.Camera;
-import com.google.zxing.integration.android.IntentIntegrator;
-import com.google.zxing.integration.android.IntentResult;
+import com.journeyapps.barcodescanner.DecoratedBarcodeView;
+import com.journeyapps.barcodescanner.BarcodeCallback;
+import com.journeyapps.barcodescanner.BarcodeResult;
+import com.journeyapps.barcodescanner.camera.CameraSettings;
 
 public class MainActivity extends Activity {
     enum Step { HOME, PALLET_MODE, PALLET_RESUME, PALLET_SCAN, PALLET_FINISH, PALLET_EDIT_ID, PALLET_EDIT_CASES,
@@ -55,6 +57,8 @@ public class MainActivity extends Activity {
     long lastScanAt = 0;
     boolean probing = false;
     boolean useFrontCamera = true;
+    boolean cameraScreen = false;
+    DecoratedBarcodeView barcodeView;
     final Handler healthHandler = new Handler(Looper.getMainLooper());
     final Runnable healthRunnable = new Runnable(){
         @Override public void run(){ probeServer(); healthHandler.postDelayed(this, online?12000:3000); }
@@ -66,7 +70,8 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b); queue = new QueueDb(this); buildShell(); registerReceivers(); configureDataWedge(); checkNetwork(); render();healthHandler.postDelayed(healthRunnable,1000);
     }
-    @Override protected void onResume(){ super.onResume(); configureDataWedge(); }
+    @Override protected void onResume(){ super.onResume(); configureDataWedge(); if(cameraScreen&&barcodeView!=null)barcodeView.resume(); }
+    @Override protected void onPause(){ if(barcodeView!=null)barcodeView.pause(); super.onPause(); }
     @Override public void onDestroy(){ super.onDestroy();healthHandler.removeCallbacks(healthRunnable);try{unregisterReceiver(scannerReceiver);}catch(Exception ignored){} try{unregisterReceiver(networkReceiver);}catch(Exception ignored){} io.shutdownNow(); tone.release(); }
 
     void buildShell(){
@@ -79,13 +84,13 @@ public class MainActivity extends Activity {
         lang = button("EN",Color.rgb(25,118,210)); lang.setOnClickListener(v->{spanish=!spanish; lang.setText(spanish?"ES":"EN"); render();}); header.addView(lang,new LinearLayout.LayoutParams(dp(64),dp(46)));
         root.addView(header);
         progress=tv("",12,Color.rgb(110,140,170)); progress.setPadding(dp(18),dp(12),dp(18),0); root.addView(progress);
-        body=new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setGravity(Gravity.CENTER_HORIZONTAL); body.setPadding(dp(18),dp(16),dp(18),dp(12));
-        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.addView(body,new ScrollView.LayoutParams(-1,-2));
-        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         nav=new LinearLayout(this); nav.setPadding(dp(14),dp(10),dp(14),dp(14)); nav.setGravity(Gravity.CENTER);
         back=button("Back",Color.rgb(52,65,85)); next=button("Next",Color.rgb(25,118,210));
         back.setOnClickListener(v->goBack()); next.setOnClickListener(v->goNext());
         nav.addView(back,new LinearLayout.LayoutParams(0,dp(56),1)); Space sp=new Space(this); nav.addView(sp,new LinearLayout.LayoutParams(dp(12),1)); nav.addView(next,new LinearLayout.LayoutParams(0,dp(56),1)); root.addView(nav);
+        body=new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setGravity(Gravity.CENTER_HORIZONTAL); body.setPadding(dp(18),dp(16),dp(18),dp(12));
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.addView(body,new ScrollView.LayoutParams(-1,-2));
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         setContentView(root);
     }
 
@@ -314,10 +319,11 @@ public class MainActivity extends Activity {
     }
     void addCameraButtons(){Button scan=choice("SCAN BARCODE","ESCANEAR CÓDIGO",v->launchCameraScan());scan.setTextSize(21);scan.setBackgroundColor(Color.rgb(198,40,40));Button toggle=choice(useFrontCamera?"Camera: FRONT":"Camera: REAR",useFrontCamera?"Cámara: FRONTAL":"Cámara: TRASERA",v->{useFrontCamera=!useFrontCamera;render();});toggle.setBackgroundColor(Color.rgb(52,65,85));}
     int cameraId(boolean front){try{int wanted=front?Camera.CameraInfo.CAMERA_FACING_FRONT:Camera.CameraInfo.CAMERA_FACING_BACK;for(int i=0;i<Camera.getNumberOfCameras();i++){Camera.CameraInfo x=new Camera.CameraInfo();Camera.getCameraInfo(i,x);if(x.facing==wanted)return i;}}catch(Exception ignored){}return 0;}
-    void launchCameraScan(){if(checkSelfPermission(android.Manifest.permission.CAMERA)!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{android.Manifest.permission.CAMERA},7001);return;}launchCameraGranted();}
-    void launchCameraGranted(){try{IntentIntegrator x=new IntentIntegrator(this);x.setPrompt(tr("Place the barcode inside the frame","Coloque el código dentro del marco"));x.setBeepEnabled(false);x.setOrientationLocked(true);x.setCameraId(cameraId(useFrontCamera));x.initiateScan();}catch(Exception e){error(tr("Camera unavailable","Cámara no disponible"));}}
-    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==7001&&grantResults.length>0&&grantResults[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)launchCameraGranted();}
-    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){IntentResult r=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);if(r!=null){if(r.getContents()!=null)onScan(r.getContents());return;}super.onActivityResult(requestCode,resultCode,data);}
+    void launchCameraScan(){if(checkSelfPermission(android.Manifest.permission.CAMERA)!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{android.Manifest.permission.CAMERA},7001);return;}showCamera();}
+    void showCamera(){try{cameraScreen=true;LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);shell.setBackgroundColor(Color.BLACK);barcodeView=new DecoratedBarcodeView(this);barcodeView.setStatusText(tr("Place the barcode inside the frame","Coloque el código dentro del marco"));CameraSettings settings=new CameraSettings();settings.setRequestedCameraId(cameraId(useFrontCamera));barcodeView.getBarcodeView().setCameraSettings(settings);shell.addView(barcodeView,new LinearLayout.LayoutParams(-1,0,1));Button cancel=button(tr("CANCEL","CANCELAR"),Color.rgb(52,65,85));cancel.setOnClickListener(v->closeCamera());shell.addView(cancel,new LinearLayout.LayoutParams(-1,dp(70)));setContentView(shell);barcodeView.decodeSingle(new BarcodeCallback(){@Override public void barcodeResult(BarcodeResult result){if(result==null||result.getText()==null)return;String value=result.getText();runOnUiThread(()->{closeCamera();onScan(value);});}});barcodeView.resume();}catch(Exception e){cameraScreen=false;buildShell();render();error(tr("Camera unavailable","Cámara no disponible"));}}
+    void closeCamera(){if(barcodeView!=null){try{barcodeView.pause();}catch(Exception ignored){}barcodeView=null;}cameraScreen=false;buildShell();render();}
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==7001){if(grantResults.length>0&&grantResults[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)showCamera();else error(tr("Camera permission is required","Se requiere permiso para la cámara"));}}
+    @Override public void onBackPressed(){if(cameraScreen){closeCamera();return;}goBack();}
     void scanCase(String code){
         scanErrorMessage="";
         if(!online){
