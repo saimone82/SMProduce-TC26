@@ -99,8 +99,10 @@ public class MainActivity extends Activity {
     }
 
     int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
-    int cameraId(boolean front){int wanted=front?Camera.CameraInfo.CAMERA_FACING_FRONT:Camera.CameraInfo.CAMERA_FACING_BACK;for(int i=0;i<Camera.getNumberOfCameras();i++){Camera.CameraInfo x=new Camera.CameraInfo();Camera.getCameraInfo(i,x);if(x.facing==wanted)return i;}return 0;}
-    void launchCameraScan(){IntentIntegrator x=new IntentIntegrator(this);x.setPrompt("Place the barcode inside the frame");x.setBeepEnabled(false);x.setOrientationLocked(true);x.setCameraId(cameraId(useFrontCamera));x.initiateScan();}
+    int cameraId(boolean front){try{int wanted=front?Camera.CameraInfo.CAMERA_FACING_FRONT:Camera.CameraInfo.CAMERA_FACING_BACK;for(int i=0;i<Camera.getNumberOfCameras();i++){Camera.CameraInfo x=new Camera.CameraInfo();Camera.getCameraInfo(i,x);if(x.facing==wanted)return i;}}catch(Exception ignored){}return 0;}
+    void launchCameraScan(){if(checkSelfPermission(android.Manifest.permission.CAMERA)!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{android.Manifest.permission.CAMERA},7001);return;}launchCameraGranted();}
+    void launchCameraGranted(){try{IntentIntegrator x=new IntentIntegrator(this);x.setPrompt("Place the barcode inside the frame");x.setBeepEnabled(false);x.setOrientationLocked(true);x.setCameraId(cameraId(useFrontCamera));x.initiateScan();}catch(Exception e){Toast.makeText(this,"Camera unavailable",Toast.LENGTH_LONG).show();}}
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==7001&&grantResults.length>0&&grantResults[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)launchCameraGranted();}
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){IntentResult r=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);if(r!=null){if(r.getContents()!=null)scan(r.getContents());return;}super.onActivityResult(requestCode,resultCode,data);}
 
     void sendDW(Bundle config) {
