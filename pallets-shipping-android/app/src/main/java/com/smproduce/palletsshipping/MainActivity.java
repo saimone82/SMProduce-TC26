@@ -19,6 +19,9 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
+import android.hardware.Camera;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 
 public class MainActivity extends Activity {
     enum Step { HOME, PALLET_MODE, PALLET_RESUME, PALLET_SCAN, PALLET_FINISH, PALLET_EDIT_ID, PALLET_EDIT_CASES,
@@ -51,6 +54,7 @@ public class MainActivity extends Activity {
     String lastScanCode = "";
     long lastScanAt = 0;
     boolean probing = false;
+    boolean useFrontCamera = true;
     final Handler healthHandler = new Handler(Looper.getMainLooper());
     final Runnable healthRunnable = new Runnable(){
         @Override public void run(){ probeServer(); healthHandler.postDelayed(this, online?12000:3000); }
@@ -129,13 +133,14 @@ public class MainActivity extends Activity {
     }
 
     void heading(String a,String b){ title=tv(a,27,Color.WHITE);title.setGravity(Gravity.CENTER);title.setTypeface(null,1);body.addView(title,new LinearLayout.LayoutParams(-1,-2)); subtitle=tv(b,16,Color.rgb(150,170,190));subtitle.setGravity(Gravity.CENTER);body.addView(subtitle,new LinearLayout.LayoutParams(-1,-2));addSpace(28); }
-    void scanQuestion(String q,String hint){ heading(q,hint); manual=new EditText(this);manual.setHint(tr("Scan or type ID","Escanee o escriba el ID"));manual.setTextColor(Color.WHITE);manual.setHintTextColor(Color.GRAY);manual.setSingleLine();manual.setInputType(InputType.TYPE_CLASS_TEXT);body.addView(manual,new LinearLayout.LayoutParams(-1,dp(58)));addSpace(12);next.setVisibility(View.VISIBLE);next.setText(tr("Continue","Continuar")); }
+    void scanQuestion(String q,String hint){ heading(q,hint); addCameraButtons(); manual=new EditText(this);manual.setHint(tr("Scan or type ID","Escanee o escriba el ID"));manual.setTextColor(Color.WHITE);manual.setHintTextColor(Color.GRAY);manual.setSingleLine();manual.setInputType(InputType.TYPE_CLASS_TEXT);body.addView(manual,new LinearLayout.LayoutParams(-1,dp(58)));addSpace(12);next.setVisibility(View.VISIBLE);next.setText(tr("Continue","Continuar")); }
 
     void palletEditScreen(){
         heading(tr("Modify pallet","Modificar pallet"),palletId);
         counter=tv(caseCount+" "+tr("CASES","CAJAS"),34,Color.rgb(102,187,106));counter.setGravity(Gravity.CENTER);counter.setTypeface(null,1);body.addView(counter);
         TextView mode=tv(palletEditRemove?tr("REMOVE MODE — scan a case to remove it","MODO ELIMINAR — escanee una caja para eliminarla"):tr("ADD MODE — scan a case to add it","MODO AÑADIR — escanee una caja para añadirla"),17,palletEditRemove?Color.rgb(248,113,113):Color.rgb(134,239,172));mode.setGravity(Gravity.CENTER);body.addView(mode);
         addSpace(12);
+        addCameraButtons();
         Button add=choice("Add Cases","Añadir cajas",v->{palletEditRemove=false;render();});add.setBackgroundColor(palletEditRemove?Color.rgb(52,65,85):Color.rgb(22,101,52));
         Button remove=choice("Remove Cases","Eliminar cajas",v->{palletEditRemove=true;render();});remove.setBackgroundColor(palletEditRemove?Color.rgb(185,28,28):Color.rgb(52,65,85));
         TextView listTitle=tv(tr("CASES ON PALLET","CAJAS EN EL PALLET"),13,Color.LTGRAY);listTitle.setTypeface(null,1);body.addView(listTitle);
@@ -154,6 +159,7 @@ public class MainActivity extends Activity {
         if(!cases&&!shipmentCompareMessage.isEmpty())scanStatus+="\n\n"+shipmentCompareMessage;
         if(cases&&!scanErrorMessage.isEmpty())scanStatus+="\n\n"+scanErrorMessage;
         detail=tv(scanStatus,16,cases&&!scanErrorMessage.isEmpty()?Color.rgb(239,68,68):(shipmentMismatch?Color.rgb(255,143,0):Color.WHITE));detail.setGravity(Gravity.CENTER);body.addView(detail,new LinearLayout.LayoutParams(-1,-2));
+        addSpace(14);addCameraButtons();
         if(!cases&&selectedOrder!=null)renderShipmentSkuProgress();
         addSpace(16);Button remove=choice("Remove Last","Eliminar último",v->removeLast(cases));remove.setBackgroundColor(Color.rgb(198,40,40));
         if(cases){
@@ -306,6 +312,10 @@ public class MainActivity extends Activity {
         if(step==Step.SHIP_SCAN){scanPallet(code);return;}
         if(manual!=null)manual.setText(code);
     }
+    void addCameraButtons(){Button scan=choice("SCAN BARCODE","ESCANEAR CÓDIGO",v->launchCameraScan());scan.setTextSize(21);scan.setBackgroundColor(Color.rgb(198,40,40));Button toggle=choice(useFrontCamera?"Camera: FRONT":"Camera: REAR",useFrontCamera?"Cámara: FRONTAL":"Cámara: TRASERA",v->{useFrontCamera=!useFrontCamera;render();});toggle.setBackgroundColor(Color.rgb(52,65,85));}
+    int cameraId(boolean front){int wanted=front?Camera.CameraInfo.CAMERA_FACING_FRONT:Camera.CameraInfo.CAMERA_FACING_BACK;for(int i=0;i<Camera.getNumberOfCameras();i++){Camera.CameraInfo x=new Camera.CameraInfo();Camera.getCameraInfo(i,x);if(x.facing==wanted)return i;}return 0;}
+    void launchCameraScan(){IntentIntegrator x=new IntentIntegrator(this);x.setPrompt(tr("Place the barcode inside the frame","Coloque el código dentro del marco"));x.setBeepEnabled(false);x.setOrientationLocked(true);x.setCameraId(cameraId(useFrontCamera));x.initiateScan();}
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){IntentResult r=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);if(r!=null){if(r.getContents()!=null)onScan(r.getContents());return;}super.onActivityResult(requestCode,resultCode,data);}
     void scanCase(String code){
         scanErrorMessage="";
         if(!online){

@@ -14,6 +14,9 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
+import android.hardware.Camera;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 
 public class MainActivity extends Activity {
     static final String PROFILE = "SM_PRODUCE_CASE_SCANNER";
@@ -25,6 +28,8 @@ public class MainActivity extends Activity {
     final ExecutorService net = Executors.newSingleThreadExecutor();
     LinearLayout root;
     TextView state, code, details, hint;
+    Button cameraButton, cameraToggle;
+    boolean useFrontCamera = true;
     volatile boolean busy = false;
     String last = "";
     long lastAt = 0;
@@ -85,9 +90,18 @@ public class MainActivity extends Activity {
         code=tv("",30,true); root.addView(code,new LinearLayout.LayoutParams(-1,-2));
         details=tv("",19,false); root.addView(details,new LinearLayout.LayoutParams(-1,-2));
         View sp=new View(this); root.addView(sp,new LinearLayout.LayoutParams(1,0,1));
-        hint=tv("Use the TC26 scan trigger",16,false); root.addView(hint,new LinearLayout.LayoutParams(-1,-2));
+        cameraButton=new Button(this); cameraButton.setText("SCAN BARCODE"); cameraButton.setTextSize(22); cameraButton.setTextColor(Color.WHITE); cameraButton.setBackgroundColor(Color.rgb(198,40,40)); cameraButton.setOnClickListener(v->launchCameraScan());
+        root.addView(cameraButton,new LinearLayout.LayoutParams(-1,dp(76)));
+        cameraToggle=new Button(this); cameraToggle.setText("Camera: FRONT"); cameraToggle.setAllCaps(false); cameraToggle.setOnClickListener(v->{useFrontCamera=!useFrontCamera;cameraToggle.setText(useFrontCamera?"Camera: FRONT":"Camera: REAR");});
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,dp(52));cp.topMargin=14;root.addView(cameraToggle,cp);
+        hint=tv("Press SCAN BARCODE for one scan",16,false); root.addView(hint,new LinearLayout.LayoutParams(-1,-2));
         setContentView(root);
     }
+
+    int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
+    int cameraId(boolean front){int wanted=front?Camera.CameraInfo.CAMERA_FACING_FRONT:Camera.CameraInfo.CAMERA_FACING_BACK;for(int i=0;i<Camera.getNumberOfCameras();i++){Camera.CameraInfo x=new Camera.CameraInfo();Camera.getCameraInfo(i,x);if(x.facing==wanted)return i;}return 0;}
+    void launchCameraScan(){IntentIntegrator x=new IntentIntegrator(this);x.setPrompt("Place the barcode inside the frame");x.setBeepEnabled(false);x.setOrientationLocked(true);x.setCameraId(cameraId(useFrontCamera));x.initiateScan();}
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){IntentResult r=IntentIntegrator.parseActivityResult(requestCode,resultCode,data);if(r!=null){if(r.getContents()!=null)scan(r.getContents());return;}super.onActivityResult(requestCode,resultCode,data);}
 
     void sendDW(Bundle config) {
         Intent i = new Intent(DW_API_ACTION);
@@ -203,5 +217,5 @@ public class MainActivity extends Activity {
         ui.postDelayed(this::ready,ok?1400:2200);
     }
 
-    void ready(){busy=false;root.setBackgroundColor(Color.rgb(6,17,31));state.setText("READY TO SCAN");code.setText("");details.setText("");hint.setText("Use the TC26 scan trigger");}
+    void ready(){busy=false;root.setBackgroundColor(Color.rgb(6,17,31));state.setText("READY TO SCAN");code.setText("");details.setText("");hint.setText("Press SCAN BARCODE for one scan");}
 }

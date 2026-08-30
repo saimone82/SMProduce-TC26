@@ -3,12 +3,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera.any" android:required="true"/>
-    <application android:theme="@style/AppTheme" android:label="Pallets / Shipping"
-        android:icon="@drawable/app_icon" android:allowBackup="false" android:usesCleartextTraffic="false">
+    <application android:allowBackup="false" android:usesCleartextTraffic="false" android:label="Scanner" android:theme="@style/AppTheme">
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
     </application>
 </manifest>
