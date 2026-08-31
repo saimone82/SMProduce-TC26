@@ -1,9 +1,6 @@
 name: Finish MIX integration
 
 on:
-  push:
-    branches:
-      - feature/mixed-order-lines
   workflow_dispatch:
 
 permissions:
