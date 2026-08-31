@@ -2041,6 +2041,82 @@ function fetchBolVarieties(object $db, string $sid, string $po): array
     }
     unset($v);
 
+    // BOL MIX SIZE GROUPING
+    // One BOL row when Variety + physical Packaging match. Sizes come only
+    // from CASES actually shipped, never from theoretically allowed SKUs.
+    $exactPalletCounts = [];
+    try {
+        $pcRows = smp_db_fetch_all($db,
+            "SELECT
+                COALESCE(NULLIF(TRIM(pc.variety),''),NULLIF(TRIM(cc.variety),''),'Unknown') AS variety,
+                COALESCE(NULLIF(TRIM(pc.packaging),''),NULLIF(TRIM(cc.packaging),''),'Unknown') AS packaging,
+                COUNT(DISTINCT sp.pallet_id) AS pallets
+             FROM shipment_pallets sp
+             INNER JOIN pallet_cases pc ON pc.pallet_id=sp.pallet_id
+             LEFT JOIN casecodes cc ON cc.serial=pc.case_serial
+             WHERE sp.shipment_id=?
+             GROUP BY
+                COALESCE(NULLIF(TRIM(pc.variety),''),NULLIF(TRIM(cc.variety),''),'Unknown'),
+                COALESCE(NULLIF(TRIM(pc.packaging),''),NULLIF(TRIM(cc.packaging),''),'Unknown')",
+            [$sid]
+        ) ?? [];
+        foreach ($pcRows as $pr) {
+            $pk = strtolower(trim((string)($pr['variety'] ?? 'Unknown'))) . "\x1f" .
+                  strtolower(trim((string)($pr['packaging'] ?? 'Unknown')));
+            $exactPalletCounts[$pk] = (int)($pr['pallets'] ?? 0);
+        }
+    } catch (Throwable $_e) {}
+
+    $grouped = [];
+    foreach ($rows as $r) {
+        $variety = trim((string)($r['variety'] ?? 'Unknown'));
+        $physicalPack = trim((string)($r['pc_packaging'] ?? 'Unknown'));
+        $orderPack = trim((string)($r['pack_preset'] ?? ''));
+        $key = strtolower($variety) . "\x1f" . strtolower($physicalPack) . "\x1f" . strtolower($orderPack);
+        if (!isset($grouped[$key])) {
+            $grouped[$key] = $r;
+            $grouped[$key]['cases'] = 0;
+            $grouped[$key]['row_weight'] = 0.0;
+            $grouped[$key]['_sizes'] = [];
+            $grouped[$key]['_skus'] = [];
+        }
+        $grouped[$key]['cases'] += (int)($r['cases'] ?? 0);
+        $grouped[$key]['row_weight'] += (float)($r['row_weight'] ?? 0);
+        $sz = trim((string)($r['size'] ?? ''));
+        if ($sz !== '' && strcasecmp($sz, 'Unknown') !== 0) $grouped[$key]['_sizes'][$sz] = true;
+        $sk = trim((string)($r['pc_sku'] ?? ''));
+        if ($sk !== '' && strcasecmp($sk, 'Unknown') !== 0) $grouped[$key]['_skus'][$sk] = true;
+    }
+
+    $rows = [];
+    foreach ($grouped as $g) {
+        $sizes = array_keys($g['_sizes']);
+        natcasesort($sizes);
+        $sizeText = implode(' / ', $sizes);
+        $skuList = array_keys($g['_skus']);
+        natcasesort($skuList);
+        $variety = trim((string)($g['variety'] ?? 'Unknown'));
+        $physicalPack = trim((string)($g['pc_packaging'] ?? 'Unknown'));
+        $pk = strtolower($variety) . "\x1f" . strtolower($physicalPack);
+        if (isset($exactPalletCounts[$pk])) $g['pallets'] = $exactPalletCounts[$pk];
+        $g['size'] = $sizeText !== '' ? $sizeText : 'Unknown';
+        $g['pc_sku'] = implode(' / ', $skuList);
+        $parts = [];
+        if ($variety !== '' && strcasecmp($variety, 'Unknown') !== 0) $parts[] = $variety;
+        if ($sizeText !== '') $parts[] = $sizeText;
+        if ($physicalPack !== '' && strcasecmp($physicalPack, 'Unknown') !== 0) $parts[] = $physicalPack;
+        $g['product_description'] = $parts ? implode(' | ', $parts) : 'Unknown product';
+        unset($g['_sizes'], $g['_skus']);
+        $rows[] = $g;
+    }
+
+    usort($rows, static function(array $a, array $b): int {
+        return strnatcasecmp(
+            (string)($a['variety'] ?? '').'|'.(string)($a['pc_packaging'] ?? '').'|'.(string)($a['size'] ?? ''),
+            (string)($b['variety'] ?? '').'|'.(string)($b['pc_packaging'] ?? '').'|'.(string)($b['size'] ?? '')
+        );
+    });
+
     return $rows;
 }
 

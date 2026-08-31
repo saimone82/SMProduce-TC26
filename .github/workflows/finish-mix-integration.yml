@@ -1,0 +1,56 @@
+name: Finish MIX integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finish-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-order-lines
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Apply final MIX patches
+        run: python3 tools/finish_mix.py
+
+      - name: PHP syntax checks
+        run: |
+          php -l webapp/config/orders_mix_lib.php
+          php -l webapp/pages/orders_mix_add.php
+          php -l webapp/api/pallets_shipping_mix_app.php
+          php -l webapp/pages/api/tc26_shipping_mix_api.php
+          php -l webapp/pages/api/tc26_shipping_api.php
+          php -l webapp/pages/orders.php
+
+      - name: Build Pallets Shipping APK
+        run: gradle -p pallets-shipping-android assembleDebug
+
+      - name: Commit generated integration changes
+        if: success()
+        run: |
+          if [ "$(cat /tmp/mix_changed)" = "1" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add webapp/pages/orders.php webapp/pages/api/tc26_shipping_api.php pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/MainActivity.java
+            git commit -m "Complete MIX Orders TC26 and BOL integration"
+            git push origin feature/mixed-order-lines
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pallets-Shipping-2.0.5-MIX
+          path: pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk

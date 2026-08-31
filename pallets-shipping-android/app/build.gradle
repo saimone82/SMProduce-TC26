@@ -7,11 +7,11 @@ android {
         applicationId 'com.smproduce.palletsshipping'
         minSdk 26
         targetSdk 35
-        versionCode 18
-        versionName '2.0.4-tablet'
-        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_app.php"'
+        versionCode 19
+        versionName '2.0.5-mix'
+        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_mix_app.php"'
         buildConfigField 'String', 'APP_TOKEN', '"SMPS_2026_8e04f770b72d4ceeb9d9"'
-        buildConfigField 'String', 'SHIPPING_API_URL', '"https://smproduceprod.uk/pages/api/tc26_shipping_api.php"'
+        buildConfigField 'String', 'SHIPPING_API_URL', '"https://smproduceprod.uk/pages/api/tc26_shipping_mix_api.php"'
     }
     buildFeatures { buildConfig true }
 }
