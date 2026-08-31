@@ -1,0 +1,23 @@
+name: Package Webapp
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package webapp
+        run: |
+          cd webapp
+          zip -r ../SMProduce-Webapp-MIX.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SMProduce-Webapp-MIX
+          path: SMProduce-Webapp-MIX.zip
