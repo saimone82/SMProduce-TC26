@@ -90,6 +90,7 @@ include '../includes/header.php';
             <div class="text-muted">Order management, printable reports and open packing requirements overview.</div>
         </div>
         <div class="d-flex gap-2 flex-wrap">
+            <a href="orders_mix_add.php" class="btn btn-warning fw-bold">+ New MIX Order</a>
             <a href="orders_add.php" class="btn btn-dark">+ New Order</a>
         </div>
     </div>

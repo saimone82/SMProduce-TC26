@@ -430,7 +430,7 @@ public class MainActivity extends Activity {
     }
     void showOrders(JSONArray a){
         if(a==null||a.length()==0){error(tr("No open orders found","No se encontraron pedidos abiertos"));return;}
-        String[] names=new String[a.length()];for(int i=0;i<a.length();i++){JSONObject o=a.optJSONObject(i);names[i]=o.optString("po")+" · "+o.optString("customer_name");}
+        String[] names=new String[a.length()];for(int i=0;i<a.length();i++){JSONObject o=a.optJSONObject(i);names[i]=o.optString("po")+" · "+o.optString("customer_name")+(o.optInt("has_mix",0)==1?" · MIX":"");}
         boolean[] checked=new boolean[a.length()];
         AlertDialog dlg=new AlertDialog.Builder(this).setTitle(tr("Select one or more POs","Seleccione uno o más PO"))
             .setMultiChoiceItems(names,checked,(d,w,on)->checked[w]=on)
