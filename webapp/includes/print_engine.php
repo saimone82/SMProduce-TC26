@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__.'/./grower_aliases.php';
 require_once __DIR__.'/db.php';
 require_once __DIR__.'/label_engine.php';
+require_once __DIR__.'/supplies_lib.php';
 
 $SMP_DB = $pdo ?: $conn;
 
@@ -197,7 +199,8 @@ if (!function_exists('smp_default_bin_zpl')) {
     function smp_default_bin_zpl(array $data): string
     {
         $barcode = smp_zpl_escape((string)($data['barcode'] ?? ''));
-        $grower  = smp_zpl_escape((string)($data['grower'] ?? ''));
+        $grower  = smp_zpl_escape(smp_grower_name($data['grower'] ?? ''));
+        $growerAlias = smp_zpl_escape(smp_grower_alias($data['grower'] ?? ''));
         $variety = smp_zpl_escape((string)($data['variety'] ?? ''));
         $type    = smp_zpl_escape((string)($data['type'] ?? ''));
         $lot     = smp_zpl_escape((string)($data['lot'] ?? ''));
@@ -213,6 +216,7 @@ if (!function_exists('smp_default_bin_zpl')) {
         $y = 220;
         $lineH = 30;
         if ($grower !== '') { $zpl .= "^FO50,{$y}^A0N,28,28^FDGrower: {$grower}^FS\n"; $y += $lineH; }
+        if ($growerAlias !== '' && $growerAlias !== '—') { $zpl .= "^FO50,{$y}^A0N,24,24^FDAlias: {$growerAlias}^FS\n"; $y += $lineH; }
         if ($variety !== '') { $zpl .= "^FO50,{$y}^A0N,28,28^FDVariety: {$variety}^FS\n"; $y += $lineH; }
         if ($type !== '') { $zpl .= "^FO50,{$y}^A0N,28,28^FDType: {$type}^FS\n"; $y += $lineH; }
         if ($lot !== '') { $zpl .= "^FO50,{$y}^A0N,28,28^FDLot: {$lot}^FS\n"; $y += $lineH; }
@@ -295,6 +299,7 @@ if (!function_exists('smp_get_default_active_printer')) {
 if (!function_exists('smp_render_bin_label_zpl')) {
     function smp_render_bin_label_zpl(array $data, ?array $template): array
     {
+        $data = smp_grower_enrich($data);
         $templateId = null;
         $templateName = null;
         if ($template && !empty($template['id'])) {
@@ -399,11 +404,12 @@ if (!function_exists('smp_db_fetch_all')) {
 
 if (!function_exists('smp_db_fetch_one')) {
     function smp_db_fetch_one($db, string $sql, array $params = []): ?array {
-        // Do not generate invalid SQL such as "... LIMIT 1 LIMIT 1" when the
-        // caller already supplied a LIMIT clause.
-        $query = preg_match('/\bLIMIT\s+\d+(?:\s*,\s*\d+)?\s*;?\s*$/i', $sql)
-            ? rtrim($sql, " \t\n\r\0\x0B;")
-            : rtrim($sql, " \t\n\r\0\x0B;") . ' LIMIT 1';
+        // Many callers already include LIMIT 1. Appending it again produces
+        // invalid SQL ("LIMIT 1 LIMIT 1") and was reported as "Pallet not found".
+        $query=rtrim($sql," \t\n\r\0\x0B;");
+        if(!preg_match('/\bLIMIT\s+\d+(?:\s*,\s*\d+)?\s*$/i',$query)){
+            $query.=' LIMIT 1';
+        }
         $rows = smp_db_fetch_all($db, $query, $params);
         return $rows[0] ?? null;
     }
@@ -562,6 +568,385 @@ if (!function_exists('smp_tc26_gen_id')) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   CUSTOMER / GROWER OWNERSHIP
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+if (!function_exists('smp_ownership_load_orders_lib')) {
+    function smp_ownership_load_orders_lib(): bool {
+        try {
+            require_once __DIR__ . '/../config/orders_sql_lib.php';
+            if (!function_exists('orders_sql_ready') || !orders_sql_ready()) return false;
+            orders_sql_init();
+            return true;
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('smp_ensure_shipment_ownership_overrides')) {
+    /**
+     * Keep an auditable, pallet-specific authorization when an operator uses
+     * the protected override from the TC26 shipping app.
+     */
+    function smp_ensure_shipment_ownership_overrides($db): void {
+        smp_db_exec($db, "CREATE TABLE IF NOT EXISTS tc26_shipment_ownership_overrides (
+            shipment_id VARCHAR(60) NOT NULL,
+            pallet_id VARCHAR(60) NOT NULL,
+            client_id INT NOT NULL DEFAULT 0,
+            user_id INT NOT NULL DEFAULT 0,
+            reason VARCHAR(500) NOT NULL DEFAULT '',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(shipment_id,pallet_id),
+            KEY idx_ownership_override_client(client_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    }
+}
+
+if (!function_exists('smp_record_shipment_ownership_override')) {
+    function smp_record_shipment_ownership_override(
+        $db,
+        string $shipmentId,
+        string $palletId,
+        int $clientId,
+        int $uid,
+        string $reason
+    ): void {
+        smp_ensure_shipment_ownership_overrides($db);
+        smp_db_exec($db,
+            "INSERT INTO tc26_shipment_ownership_overrides
+                (shipment_id,pallet_id,client_id,user_id,reason,created_at)
+             VALUES (?,?,?,?,?,NOW())
+             ON DUPLICATE KEY UPDATE client_id=VALUES(client_id),user_id=VALUES(user_id),
+                 reason=VALUES(reason),created_at=NOW()",
+            [$shipmentId,$palletId,$clientId,$uid,substr($reason,0,500)]
+        );
+    }
+}
+
+if (!function_exists('smp_has_shipment_ownership_override')) {
+    function smp_has_shipment_ownership_override(
+        $db,
+        string $shipmentId,
+        string $palletId,
+        int $clientId
+    ): bool {
+        if ($shipmentId === '' || $palletId === '') return false;
+        smp_ensure_shipment_ownership_overrides($db);
+        $row = smp_db_fetch_one($db,
+            "SELECT shipment_id FROM tc26_shipment_ownership_overrides
+             WHERE shipment_id=? AND pallet_id=? AND client_id=? LIMIT 1",
+            [$shipmentId,$palletId,$clientId]
+        );
+        return !empty($row);
+    }
+}
+
+if (!function_exists('smp_clear_shipment_ownership_override')) {
+    function smp_clear_shipment_ownership_override($db, string $shipmentId, string $palletId): void {
+        if ($shipmentId === '' || $palletId === '') return;
+        smp_ensure_shipment_ownership_overrides($db);
+        smp_db_exec($db,
+            "DELETE FROM tc26_shipment_ownership_overrides WHERE shipment_id=? AND pallet_id=?",
+            [$shipmentId,$palletId]
+        );
+    }
+}
+
+if (!function_exists('smp_pallet_ownership_profile')) {
+    /** Resolve every grower physically present on a pallet to its exclusive client. */
+    function smp_pallet_ownership_profile($db, string $palletId): array {
+        $profile = [
+            'ok'=>1,
+            'pallet_id'=>$palletId,
+            'growers'=>[],
+            'client_ids'=>[],
+            'client_names'=>[],
+            'has_unassigned'=>false,
+            'case_count'=>0,
+        ];
+        if ($palletId === '' || !smp_ownership_load_orders_lib()) return $profile;
+
+        $rows = smp_db_fetch_all($db,
+            "SELECT COALESCE(NULLIF(TRIM(pc.grower),''),NULLIF(TRIM(cc.grower),''),'') AS grower,
+                    COUNT(*) AS cases
+             FROM pallet_cases pc
+             LEFT JOIN casecodes cc ON cc.serial=pc.case_serial
+             WHERE pc.pallet_id=?
+             GROUP BY COALESCE(NULLIF(TRIM(pc.grower),''),NULLIF(TRIM(cc.grower),''),'')
+             ORDER BY grower",
+            [$palletId]
+        ) ?? [];
+
+        foreach ($rows as $row) {
+            $raw = trim((string)($row['grower'] ?? ''));
+            $cases = (int)($row['cases'] ?? 0);
+            $profile['case_count'] += $cases;
+            $owners = orders_resolve_grower_owners_sql($raw);
+            foreach ($owners as $owner) {
+                $clientId = (int)($owner['client_id'] ?? 0);
+                $clientName = trim((string)($owner['client_name'] ?? ''));
+                $growerName = trim((string)($owner['grower_name'] ?? $raw));
+                $profile['growers'][] = [
+                    'raw'=>$raw,
+                    'grower_id'=>(int)($owner['grower_id'] ?? 0),
+                    'grower_name'=>$growerName,
+                    'grower_alias'=>trim((string)($owner['grower_alias'] ?? '')),
+                    'client_id'=>$clientId,
+                    'client_name'=>$clientName,
+                    'cases'=>$cases,
+                ];
+                if ($clientId > 0) {
+                    $profile['client_ids'][$clientId] = $clientId;
+                    if ($clientName !== '') $profile['client_names'][$clientId] = $clientName;
+                } else {
+                    $profile['has_unassigned'] = true;
+                }
+            }
+        }
+        $profile['client_ids'] = array_values($profile['client_ids']);
+        $profile['client_names'] = array_values($profile['client_names']);
+        return $profile;
+    }
+}
+
+if (!function_exists('smp_validate_case_for_pallet_ownership')) {
+    /** Prevent a protected grower from being mixed into a general/other-client pallet. */
+    function smp_validate_case_for_pallet_ownership($db, string $palletId, string $rawGrower): array {
+        if (!smp_ownership_load_orders_lib()) return ['ok'=>1];
+
+        $existing = smp_pallet_ownership_profile($db, $palletId);
+        $incomingOwners = orders_resolve_grower_owners_sql($rawGrower);
+        $incomingClientIds = [];
+        $incomingNames = [];
+        $incomingUnassigned = false;
+        foreach ($incomingOwners as $owner) {
+            $clientId = (int)($owner['client_id'] ?? 0);
+            if ($clientId > 0) {
+                $incomingClientIds[$clientId] = $clientId;
+                $incomingNames[$clientId] = trim((string)($owner['client_name'] ?? ''));
+            } else {
+                $incomingUnassigned = true;
+            }
+        }
+        $incomingClientIds = array_values($incomingClientIds);
+        if (count($incomingClientIds) > 1 || ($incomingClientIds && $incomingUnassigned)) {
+            return ['ok'=>0,'err'=>'Grower ownership conflict: the scanned case contains growers belonging to different customer groups.'];
+        }
+
+        $existingClientIds = array_values(array_unique(array_map('intval', (array)$existing['client_ids'])));
+        $existingUnassigned = !empty($existing['has_unassigned']);
+        if (count($existingClientIds) > 1 || ($existingClientIds && $existingUnassigned)) {
+            return ['ok'=>0,'err'=>'This pallet already contains a customer ownership conflict and must be corrected before adding cases.'];
+        }
+
+        $existingClass = $existingClientIds[0] ?? 0;
+        $incomingClass = $incomingClientIds[0] ?? 0;
+        if ((int)$existing['case_count'] > 0 && $existingClass !== $incomingClass) {
+            $incomingName = trim((string)($incomingNames[$incomingClass] ?? ''));
+            $existingName = trim((string)($existing['client_names'][0] ?? ''));
+            if ($existingClass > 0) {
+                return ['ok'=>0,'err'=>'This pallet is reserved for '.$existingName.'. The scanned grower cannot be mixed into it.'];
+            }
+            if ($incomingClass > 0) {
+                return ['ok'=>0,'err'=>'This grower belongs exclusively to '.$incomingName.' and cannot be mixed with unrestricted growers on the pallet.'];
+            }
+            return ['ok'=>0,'err'=>'Grower ownership conflict on this pallet.'];
+        }
+        return ['ok'=>1,'client_id'=>$incomingClass,'client_name'=>(string)($incomingNames[$incomingClass] ?? '')];
+    }
+}
+
+if (!function_exists('smp_shipment_order_clients')) {
+    /** Return the real clients connected to a shipment's selected PO(s). */
+    function smp_shipment_order_clients($db, string $shipmentId): array {
+        if ($shipmentId === '' || !smp_ownership_load_orders_lib()) return [];
+        $orderIds = [];
+        try {
+            $selected = smp_db_fetch_all($db,
+                "SELECT order_id FROM tc26_shipment_orders WHERE shipment_id=? ORDER BY sort_order,id",
+                [$shipmentId]
+            ) ?? [];
+            foreach ($selected as $row) {
+                $id = (int)($row['order_id'] ?? 0);
+                if ($id > 0) $orderIds[$id] = $id;
+            }
+        } catch (Throwable $e) {
+        }
+
+        $ship = smp_db_fetch_one($db,
+            "SELECT order_id,po FROM shipments WHERE shipment_id=? LIMIT 1",
+            [$shipmentId]
+        ) ?? [];
+        if (!$orderIds && (int)($ship['order_id'] ?? 0) > 0) {
+            $orderIds[(int)$ship['order_id']] = (int)$ship['order_id'];
+        }
+
+        $clients = [];
+        foreach ($orderIds as $orderId) {
+            $order = orders_fetch_one(
+                "SELECT o.id AS order_id,o.po,o.client_id,
+                        COALESCE(c.client_name,o.customer,'') AS client_name
+                 FROM orders o
+                 LEFT JOIN order_clients c ON c.id=o.client_id
+                 WHERE o.id=? LIMIT 1",
+                [$orderId]
+            );
+            if (!$order) continue;
+            $clientId = (int)($order['client_id'] ?? 0);
+            if ($clientId > 0) $clients[$clientId] = $order;
+        }
+
+        if (!$clients && trim((string)($ship['po'] ?? '')) !== '') {
+            $po = trim((string)$ship['po']);
+            if (strpos($po, ',') === false) {
+                $order = orders_fetch_one(
+                    "SELECT o.id AS order_id,o.po,o.client_id,
+                            COALESCE(c.client_name,o.customer,'') AS client_name
+                     FROM orders o
+                     LEFT JOIN order_clients c ON c.id=o.client_id
+                     WHERE o.po=? LIMIT 1",
+                    [$po]
+                );
+                if ($order && (int)($order['client_id'] ?? 0) > 0) {
+                    $clients[(int)$order['client_id']] = $order;
+                }
+            }
+        }
+        return array_values($clients);
+    }
+}
+
+if (!function_exists('smp_validate_pallet_for_client_ownership')) {
+    function smp_validate_pallet_for_client_ownership($db, string $palletId, int $clientId, string $clientName=''): array {
+        if (!smp_ownership_load_orders_lib()) return ['ok'=>1];
+        $profile = smp_pallet_ownership_profile($db, $palletId);
+        $policy = orders_client_grower_policy_sql($clientId);
+        if ($clientName === '') $clientName = trim((string)($policy['client_name'] ?? ''));
+
+        foreach ((array)$profile['growers'] as $grower) {
+            $ownerId = (int)($grower['client_id'] ?? 0);
+            $ownerName = trim((string)($grower['client_name'] ?? ''));
+            $growerName = trim((string)($grower['grower_name'] ?? $grower['raw'] ?? 'Unknown'));
+
+            if ($clientId <= 0 && $ownerId > 0) {
+                return ['ok'=>0,'err'=>$growerName.' belongs exclusively to '.$ownerName.'. Select a '.$ownerName.' PO before scanning this pallet.'];
+            }
+            if ($clientId > 0 && !empty($policy['restricted']) && $ownerId !== $clientId) {
+                return ['ok'=>0,'err'=>'Pallet rejected: '.$clientName.' orders accept only growers assigned to '.$clientName.'. '.$growerName.' is not assigned to this customer.'];
+            }
+            if ($clientId > 0 && empty($policy['restricted']) && $ownerId > 0 && $ownerId !== $clientId) {
+                return ['ok'=>0,'err'=>'Pallet rejected: '.$growerName.' belongs exclusively to '.$ownerName.', not '.$clientName.'.'];
+            }
+        }
+
+        if ($clientId > 0 && !empty($policy['restricted']) && (int)$policy['grower_count'] <= 0) {
+            return ['ok'=>0,'err'=>$clientName.' is protected but has no growers assigned in Grower Ownership.'];
+        }
+        return ['ok'=>1,'client_id'=>$clientId,'client_name'=>$clientName,'profile'=>$profile];
+    }
+}
+
+if (!function_exists('smp_validate_pallet_for_shipment_ownership')) {
+    function smp_validate_pallet_for_shipment_ownership($db, string $shipmentId, string $palletId): array {
+        if (!smp_ownership_load_orders_lib()) return ['ok'=>1];
+        $clients = smp_shipment_order_clients($db, $shipmentId);
+        if (count($clients) > 1) {
+            return ['ok'=>0,'err'=>'The selected POs belong to different customers. A shipment can contain POs for only one customer.'];
+        }
+        return smp_validate_pallet_for_client_ownership(
+            $db,
+            $palletId,
+            (int)($clients[0]['client_id'] ?? 0),
+            trim((string)($clients[0]['client_name'] ?? ''))
+        );
+    }
+}
+
+if (!function_exists('smp_validate_order_ids_for_shipment')) {
+    /** Validate selected POs and any pallets already scanned before changing a shipment. */
+    function smp_validate_order_ids_for_shipment($db, string $shipmentId, array $orderIds): array {
+        if (!smp_ownership_load_orders_lib()) return ['ok'=>0,'err'=>'Orders database unavailable'];
+        $orders = [];
+        $clientIds = [];
+        foreach (array_values(array_unique(array_filter(array_map('intval', $orderIds)))) as $orderId) {
+            $order = orders_fetch_one(
+                "SELECT o.id,o.po,o.client_id,COALESCE(c.client_name,o.customer,'') AS customer_name
+                 FROM orders o
+                 LEFT JOIN order_clients c ON c.id=o.client_id
+                 WHERE o.id=? LIMIT 1",
+                [$orderId]
+            );
+            if (!$order) return ['ok'=>0,'err'=>'Selected order '.$orderId.' was not found'];
+            $clientId = (int)($order['client_id'] ?? 0);
+            if ($clientId <= 0) return ['ok'=>0,'err'=>'Order '.$order['po'].' has no valid customer'];
+            $clientIds[$clientId] = $clientId;
+            $orders[] = $order;
+        }
+        if (!$orders) return ['ok'=>0,'err'=>'Select at least one PO'];
+        if (count($clientIds) > 1) {
+            return ['ok'=>0,'err'=>'The selected POs belong to different customers. Select POs for one customer only.'];
+        }
+
+        $clientId = (int)array_values($clientIds)[0];
+        $policyError = null;
+        if (!orders_validate_client_grower_setup_sql($clientId, $policyError)) {
+            return ['ok'=>0,'err'=>$policyError];
+        }
+        $clientName = trim((string)($orders[0]['customer_name'] ?? ''));
+        $check = smp_validate_shipment_for_client_ownership($db, $shipmentId, $clientId, $clientName);
+        if (empty($check['ok'])) return $check;
+        return ['ok'=>1,'client_id'=>$clientId,'client_name'=>$clientName,'orders'=>$orders];
+    }
+}
+
+if (!function_exists('smp_validate_shipment_for_client_ownership')) {
+    function smp_validate_shipment_for_client_ownership($db, string $shipmentId, int $clientId, string $clientName=''): array {
+        $pallets = smp_db_fetch_all($db,
+            "SELECT pallet_id FROM shipment_pallets WHERE shipment_id=? ORDER BY id",
+            [$shipmentId]
+        ) ?? [];
+        foreach ($pallets as $row) {
+            $palletId = (string)($row['pallet_id'] ?? '');
+            if (smp_has_shipment_ownership_override($db, $shipmentId, $palletId, $clientId)) {
+                continue;
+            }
+            $check = smp_validate_pallet_for_client_ownership(
+                $db,
+                $palletId,
+                $clientId,
+                $clientName
+            );
+            if (empty($check['ok'])) return $check;
+        }
+        return ['ok'=>1,'client_id'=>$clientId,'client_name'=>$clientName];
+    }
+}
+
+if (!function_exists('smp_validate_shipment_ownership')) {
+    function smp_validate_shipment_ownership($db, string $shipmentId): array {
+        $clients = smp_shipment_order_clients($db, $shipmentId);
+        if (count($clients) > 1) {
+            return ['ok'=>0,'err'=>'The selected POs belong to different customers. A shipment can contain POs for only one customer.'];
+        }
+        $clientId = (int)($clients[0]['client_id'] ?? 0);
+        $pallets = smp_db_fetch_all($db,
+            "SELECT pallet_id FROM shipment_pallets WHERE shipment_id=? ORDER BY id",
+            [$shipmentId]
+        ) ?? [];
+        foreach ($pallets as $row) {
+            $palletId = (string)($row['pallet_id'] ?? '');
+            if (smp_has_shipment_ownership_override($db, $shipmentId, $palletId, $clientId)) {
+                continue;
+            }
+            $check = smp_validate_pallet_for_shipment_ownership($db, $shipmentId, $palletId);
+            if (empty($check['ok'])) return $check;
+        }
+        return ['ok'=>1];
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    TC26 – PALLET functions
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -607,37 +992,6 @@ if (!function_exists('smp_tc26_pallet_status')) {
     }
 }
 
-if (!function_exists('smp_lookup_casecode_by_scan')) {
-    /** Resolve both raw and formatted barcodes across legacy casecodes schemas. */
-    function smp_lookup_casecode_by_scan($db, string $serial): ?array {
-        $configuredTable = preg_replace('/[^A-Za-z0-9_]/','',smp_get_calc_setting($db,'case_lookup_table','casecodes'));
-        $configured = preg_replace('/[^A-Za-z0-9_]/','',smp_get_calc_setting($db,'case_lookup_key','serial'));
-        if($serial==='') return null;
-        $tables=array_values(array_unique(array_filter([$configuredTable,'casecodes'])));
-        $keys=array_values(array_unique(array_filter([$configured,'serial','code','barcode','case_serial','id','Serial','SerialFormatted','serial_formatted'])));
-        foreach($tables as $tbl){
-            foreach($keys as $key){
-                try{
-                    $row=smp_db_fetch_one($db,"SELECT * FROM `$tbl` WHERE UPPER(TRIM(CAST(`$key` AS CHAR)))=UPPER(TRIM(?)) LIMIT 1",[$serial]);
-                    if($row) return $row;
-                }catch(Throwable $e){ /* table/column not present */ }
-            }
-        }
-        // Some production flows record a scanned case before or without all
-        // descriptive casecodes fields. It is still a known case if it exists
-        // in one of the production scan ledgers.
-        foreach ([['scanner_scans','serial'],['barcode_scans','code']] as $source) {
-            try {
-                $known=smp_db_fetch_one($db,
-                    "SELECT `{$source[1]}` AS serial FROM `{$source[0]}` WHERE UPPER(TRIM(CAST(`{$source[1]}` AS CHAR)))=UPPER(TRIM(?)) LIMIT 1",
-                    [$serial]);
-                if($known) return ['serial'=>$serial];
-            } catch(Throwable $e) { /* optional legacy source */ }
-        }
-        return null;
-    }
-}
-
 if (!function_exists('smp_tc26_add_case_to_pallet')) {
     function smp_tc26_add_case_to_pallet($db, string $palletId, string $serial, $opts_or_uid = []): array {
         // Normalize $opts_or_uid: accept both legacy int $uid and new array $opts
@@ -661,11 +1015,15 @@ if (!function_exists('smp_tc26_add_case_to_pallet')) {
         $variety = $grower = $size = $packaging = $crop = $lot = null;
         $sku     = null;
         $packDate = null;
-        $caseFound = false;
         try {
-            $row=smp_lookup_casecode_by_scan($db,$serial);
-            if ($row) {
-                    $caseFound = true;
+            $tbl    = smp_get_calc_setting($db, 'case_lookup_table',  'casecodes');
+            $keyCol = smp_get_calc_setting($db, 'case_lookup_key',    'serial');
+            $tblSafe = preg_replace('/[^A-Za-z0-9_]/', '', $tbl);
+            $keySafe = preg_replace('/[^A-Za-z0-9_]/', '', $keyCol);
+            if ($tblSafe !== '' && $keySafe !== '') {
+                $row = smp_db_fetch_one($db,
+                    "SELECT * FROM `$tblSafe` WHERE `$keySafe`=? LIMIT 1", [$serial]);
+                if ($row) {
                     $variety  = $row['variety']   ?? $row['Variety']   ?? null;
                     $grower   = $row['grower']    ?? $row['Grower']    ?? null;
                     $size     = $row['size']      ?? $row['Size']      ?? null;
@@ -674,6 +1032,7 @@ if (!function_exists('smp_tc26_add_case_to_pallet')) {
                     $crop     = $row['crop']      ?? $row['Crop']      ?? null;
                     $lot      = $row['lot']       ?? $row['Lot']       ?? null;
                     $packDate = $row['pack_date'] ?? $row['PackDate']  ?? null;
+                }
             }
         } catch (Throwable $e) { /* no master table – proceed with nulls */ }
 
@@ -689,11 +1048,14 @@ if (!function_exists('smp_tc26_add_case_to_pallet')) {
 
         // Do not create anonymous pallet rows: they make the case count look
         // correct while the pallet composition is displayed as "Unknown".
-        if (!$caseFound && trim((string)$sku)==='' && trim((string)$variety)==='' &&
+        if (trim((string)$sku)==='' && trim((string)$variety)==='' &&
             trim((string)$grower)==='' && trim((string)$packaging)==='' &&
             trim((string)$size)==='') {
             return ['ok'=>0,'err'=>'Case not found in casecodes — scan not added to pallet'];
         }
+
+        $ownershipCheck = smp_validate_case_for_pallet_ownership($db, $palletId, (string)$grower);
+        if (empty($ownershipCheck['ok'])) return $ownershipCheck;
 
         // ── PRE-CHECK: is this case already on the pallet? ───────────────────
         // Do this BEFORE the INSERT so we can distinguish "duplicate" from
@@ -784,6 +1146,11 @@ if (!function_exists('smp_tc26_add_case_to_pallet')) {
             return ['ok'=>0,'err'=>'Insert failed — check DB column types (pallet_id must be VARCHAR). '.$insertErr];
         }
 
+        // A case becomes available inventory when it is added to a pallet.
+        // Usage is idempotent by case serial + supply, so duplicate scans cannot double-deduct.
+        try { smp_supplies_consume_case($db, $serial, (string)$variety, (string)$size, (string)$packaging); }
+        catch (Throwable $e) { error_log('Supplies deduction: '.$e->getMessage()); }
+
         return smp_tc26_pallet_status($db, $palletId);
     }
 }
@@ -795,13 +1162,16 @@ if (!function_exists('smp_repair_pallet_case_metadata')) {
         $rows = smp_db_fetch_all($db,
             "SELECT id,case_serial,sku,variety,grower,size,packaging,crop,lot,pack_date
              FROM pallet_cases WHERE pallet_id=?", [$palletId]) ?? [];
+        $tbl = preg_replace('/[^A-Za-z0-9_]/','',smp_get_calc_setting($db,'case_lookup_table','casecodes'));
+        $key = preg_replace('/[^A-Za-z0-9_]/','',smp_get_calc_setting($db,'case_lookup_key','serial'));
+        if ($tbl==='' || $key==='') return 0;
         $fixed=0;
         foreach($rows as $pc){
             $hasData = trim((string)($pc['sku']??''))!=='' || trim((string)($pc['variety']??''))!=='' ||
                        trim((string)($pc['grower']??''))!=='' || trim((string)($pc['packaging']??''))!=='' ||
                        trim((string)($pc['size']??''))!=='';
             if($hasData) continue;
-            $cc=smp_lookup_casecode_by_scan($db,(string)$pc['case_serial']);
+            $cc=smp_db_fetch_one($db,"SELECT * FROM `$tbl` WHERE `$key`=? LIMIT 1",[(string)$pc['case_serial']]);
             if(!$cc) continue;
             $vals=[
                 $cc['SKU']??$cc['sku']??null, $cc['variety']??$cc['Variety']??null,
@@ -835,9 +1205,16 @@ if (!function_exists('smp_tc26_close_pallet')) {
         smp_db_exec($db,
             "UPDATE pallets SET status='CLOSED', is_partial=0, closed_at=NOW() WHERE pallet_id=?", [$palletId]);
         $st = smp_tc26_pallet_status($db, $palletId);
+        $labelPrinted = false;
+        $printError = '';
         if ($printerId > 0 && function_exists('smp_tc26_print_pallet_label')) {
-            smp_tc26_print_pallet_label($db, $palletId, $printerId, false);
+            $labelPrinted = smp_tc26_print_pallet_label($db, $palletId, $printerId, false);
+            $printError = (string)($GLOBALS['smp_pallet_print_error'] ?? '');
+        } elseif ($printerId <= 0) {
+            $printError = 'No pallet label printer is configured.';
         }
+        $st['label_printed'] = $labelPrinted ? 1 : 0;
+        $st['print_error'] = $printError;
         return $st;
     }
 }
@@ -863,7 +1240,6 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
     function smp_tc26_print_pallet_label(
         $db,string $palletId,int $printerId=0,bool $isPartial=false
     ): bool {
-        $GLOBALS['smp_pallet_print_error']='';
         try {
             /* ── Pallet header ───────────────────────────────────────────── */
             $pal=smp_db_fetch_one($db,
@@ -873,7 +1249,7 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
                  WHERE pallet_id=? LIMIT 1",
                 [$palletId]
             );
-            if(!$pal){$GLOBALS['smp_pallet_print_error']='Pallet '.$palletId.' not found';return false;}
+            if(!$pal)return false;
 
             // Ensure legacy serial-only rows contribute their real composition.
             smp_repair_pallet_case_metadata($db,$palletId);
@@ -935,11 +1311,7 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
             }
             if($printerId>0)$printer=smp_get_printer_by_id($printerId);
             if(!$printer)$printer=smp_get_default_active_printer();
-            if(!$printer){$GLOBALS['smp_pallet_print_error']='Selected printer is not active or no longer exists';return false;}
-            $printerIp=trim((string)($printer['printer_ip']??$printer['ip']??''));
-            $printerPort=(int)($printer['printer_port']??$printer['port']??9100);
-            if($printerPort<=0)$printerPort=9100;
-            if($printerIp===''){$GLOBALS['smp_pallet_print_error']='Selected printer has no IP address';return false;}
+            if(!$printer||empty($printer['printer_ip']))return false;
 
             /* ── Final active pallet template ───────────────────────────── */
             $template=le_db_fetch_one(
@@ -947,7 +1319,7 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
                  WHERE label_type='pallet' AND is_active=1
                  ORDER BY updated_at DESC,id DESC LIMIT 1",[]
             );
-            if(!$template){$GLOBALS['smp_pallet_print_error']='No active PALLET label template found';return false;}
+            if(!$template)return false;
 
             $data=[
                 'pallet_id'=>$palletId,
@@ -993,21 +1365,15 @@ if (!function_exists('smp_tc26_print_pallet_label')) {
             if($targetDpi<=0)$targetDpi=300;
 
             $zpl=trim((string)le_render_template($template,$data,$targetDpi));
-            if($zpl===''){$GLOBALS['smp_pallet_print_error']='The PALLET template generated empty ZPL';return false;}
+            if($zpl==='')return false;
 
             $res=le_send_to_printer(
-                $printerIp,
-                $printerPort,
+                (string)$printer['printer_ip'],
+                (int)($printer['printer_port']??9100),
                 $zpl
             );
-            $ok=is_array($res)?!empty($res['ok']):(bool)$res;
-            if(!$ok){
-                $detail=is_array($res)?trim((string)($res['error']??$res['err']??$res['message']??'')):'';
-                $GLOBALS['smp_pallet_print_error']='Zebra send failed at '.$printerIp.':'.$printerPort.($detail!==''?' — '.$detail:'');
-            }
-            return $ok;
+            return is_array($res)?!empty($res['ok']):(bool)$res;
         }catch(Throwable $e){
-            $GLOBALS['smp_pallet_print_error']='Pallet label error: '.$e->getMessage();
             return false;
         }
     }
@@ -1058,7 +1424,13 @@ if (!function_exists('smp_tc26_shipment_status')) {
 }
 
 if (!function_exists('smp_tc26_add_pallet_to_shipment')) {
-    function smp_tc26_add_pallet_to_shipment($db, string $shipmentId, string $palletId, int $uid = 0): array {
+    function smp_tc26_add_pallet_to_shipment(
+        $db,
+        string $shipmentId,
+        string $palletId,
+        int $uid = 0,
+        bool $overrideOwnership = false
+    ): array {
         if ($shipmentId === '') return ['ok'=>0,'err'=>'Missing shipment_id'];
         if ($palletId   === '') return ['ok'=>0,'err'=>'Missing pallet_id'];
 
@@ -1069,6 +1441,13 @@ if (!function_exists('smp_tc26_add_pallet_to_shipment')) {
 
         $pal = smp_db_fetch_one($db, "SELECT status FROM pallets WHERE pallet_id=?", [$palletId]);
         if (!$pal) return ['ok'=>0,'err'=>'Pallet not found'];
+
+        $ownershipCheck = smp_validate_pallet_for_shipment_ownership($db, $shipmentId, $palletId);
+        $overrideReason = '';
+        if (empty($ownershipCheck['ok'])) {
+            if (!$overrideOwnership) return $ownershipCheck;
+            $overrideReason = trim((string)($ownershipCheck['err'] ?? 'Customer/grower ownership override'));
+        }
 
         // ── PRE-CHECK: is this pallet already linked to this shipment? ────────
         try {
@@ -1126,7 +1505,22 @@ if (!function_exists('smp_tc26_add_pallet_to_shipment')) {
             }
         }
 
-        return smp_tc26_shipment_status($db, $shipmentId);
+        if ($overrideReason !== '') {
+            $clients = smp_shipment_order_clients($db, $shipmentId);
+            $clientId = (int)($clients[0]['client_id'] ?? 0);
+            smp_record_shipment_ownership_override(
+                $db,
+                $shipmentId,
+                $palletId,
+                $clientId,
+                $uid,
+                $overrideReason
+            );
+        }
+
+        $status = smp_tc26_shipment_status($db, $shipmentId);
+        if ($overrideReason !== '') $status['ownership_override'] = 1;
+        return $status;
     }
 }
 
@@ -1196,10 +1590,19 @@ if (!function_exists('smp_tc26_close_shipment')) {
     function smp_tc26_close_shipment($db,string $shipmentId,int $uid=0,int $printerId=0): array {
         if ($shipmentId==='') return ['ok'=>0,'err'=>'Missing shipment_id'];
 
-        smp_db_exec($db,
-            "UPDATE shipments SET status='CLOSED',closed_at=NOW() WHERE shipment_id=?",
-            [$shipmentId]
+        $ownershipCheck=smp_validate_shipment_ownership($db,$shipmentId);
+        if(empty($ownershipCheck['ok'])) return $ownershipCheck;
+
+        $closeDbError=null;
+        $closeUpdated=smp_db_exec_rows($db,
+            "UPDATE shipments SET status='CLOSED',closed_at=NOW()
+             WHERE shipment_id=? AND UPPER(COALESCE(status,''))<>'CLOSED'",
+            [$shipmentId],$closeDbError
         );
+        if($closeUpdated<0){
+            return ['ok'=>0,'err'=>$closeDbError?:'Unable to close shipment'];
+        }
+        $wasAlreadyClosed=$closeUpdated===0;
 
         $cfg=smp_get_shipment_print_settings($db);
         if($printerId<=0) $printerId=(int)$cfg['label_printer_id'];
@@ -1217,8 +1620,31 @@ if (!function_exists('smp_tc26_close_shipment')) {
         }
 
         $st=smp_tc26_shipment_status($db,$shipmentId);
+        // API callers use this flag to avoid printing the BOL again when a
+        // device retries the close request for an already-closed shipment.
+        $st['was_already_closed']=$wasAlreadyClosed?1:0;
         $st['label_printed']=$labelPrinted?1:0;
         $st['label_error']=$labelError;
+
+        $emailResult=['ok'=>1,'sent'=>0,'reason'=>$wasAlreadyClosed?'already_closed':'unavailable'];
+        if(!$wasAlreadyClosed){
+            try{
+                $notificationFile=__DIR__.'/orders_due_report.php';
+                if(is_file($notificationFile))require_once $notificationFile;
+                if(function_exists('smp_shipment_close_email_notify')){
+                    $emailResult=smp_shipment_close_email_notify($db,$shipmentId);
+                }else{
+                    $emailResult=['ok'=>0,'sent'=>0,'error'=>'Shipment closed, but the email notification module is unavailable'];
+                }
+            }catch(Throwable $emailException){
+                error_log('shipment close email error for '.$shipmentId.': '.$emailException->getMessage());
+                $emailResult=['ok'=>0,'sent'=>0,'error'=>'Shipment closed, but the notification email failed'];
+            }
+        }
+        $st['close_email_sent']=!empty($emailResult['sent'])?1:0;
+        $st['close_email_enabled']=($emailResult['reason']??'')==='disabled'?0:1;
+        $st['close_email_recipients']=$emailResult['recipients']??[];
+        $st['close_email_error']=empty($emailResult['ok'])?(string)($emailResult['error']??'Notification email failed'):null;
         return $st;
     }
 }
