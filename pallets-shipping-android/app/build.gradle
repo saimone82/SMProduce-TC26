@@ -1,5 +1,10 @@
 plugins { id 'com.android.application' }
 
+def appToken = providers.gradleProperty('SMPS_APP_TOKEN')
+        .orElse(providers.environmentVariable('SMPS_APP_TOKEN'))
+        .getOrElse('')
+def escapedAppToken = appToken.replace('\\', '\\\\').replace('"', '\\"')
+
 android {
     namespace 'com.smproduce.palletsshipping'
     compileSdk 35
@@ -7,15 +12,16 @@ android {
         applicationId 'com.smproduce.palletsshipping'
         minSdk 26
         targetSdk 35
-        versionCode 19
-        versionName '2.0.5-mix'
-        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_mix_app.php"'
-        buildConfigField 'String', 'APP_TOKEN', '"SMPS_2026_8e04f770b72d4ceeb9d9"'
-        buildConfigField 'String', 'SHIPPING_API_URL', '"https://smproduceprod.uk/pages/api/tc26_shipping_mix_api.php"'
+        versionCode 29
+        versionName '2.0.14-pallet-state-fix'
+        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_app.php"'
+        buildConfigField 'String', 'APP_TOKEN', "\"${escapedAppToken}\""
+        buildConfigField 'String', 'SHIPPING_API_URL', '"https://smproduceprod.uk/pages/api/tc26_shipping_api.php"'
     }
     buildFeatures { buildConfig true }
+    buildTypes {
+        debug { debuggable false }
+    }
 }
 
-dependencies {
-    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
-}
+dependencies {}

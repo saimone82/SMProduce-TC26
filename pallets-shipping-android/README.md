@@ -2,6 +2,8 @@
 
 Native Android app for Zebra TC26. It provides an English/Spanish question wizard for palletizing and shipping, DataWedge barcode input, and an idempotent local offline scan queue.
 
+Current recovered production baseline: `2.0.14-pallet-state-fix` (`versionCode 29`). The source was reconstructed from the installed production APK and verified with a clean Android build.
+
 ## Deploy the PHP API
 
 Copy these two files from the supplied webapp package, preserving paths:
@@ -9,7 +11,7 @@ Copy these two files from the supplied webapp package, preserving paths:
 - `api/pallets_shipping_app.php`
 - `config/pallets_shipping_app.php`
 
-The token in the PHP config must match `BuildConfig.APP_TOKEN` in `app/build.gradle`.
+The token in the PHP config must match the `SMPS_APP_TOKEN` Gradle property or environment variable. Store it as a GitHub Actions repository secret named `SMPS_APP_TOKEN`; do not commit it to the repository.
 
 ## Zebra DataWedge profile
 
