@@ -8,9 +8,9 @@ android {
         applicationId 'com.smproduce.palletsshipping.tablet.tools'
         minSdk 26
         targetSdk 35
-        versionCode 60
-        versionName '2.0.40-tc26'
-        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_app.php"'
+        versionCode 61
+        versionName '2.0.41-tc26'
+        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_tc26_app.php"'
         buildConfigField 'String', 'APP_TOKEN', '"SMPS_2026_8e04f770b72d4ceeb9d9"'
         buildConfigField 'String', 'SHIPPING_API_URL', '"https://smproduceprod.uk/pages/api/tc26_shipping_api.php"'
         buildConfigField 'String', 'MODIFY_API_URL', '"https://smproduceprod.uk/api/tc26_modify_pallet.php"'
