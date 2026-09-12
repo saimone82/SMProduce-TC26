@@ -9,6 +9,7 @@ on:
     paths:
       - 'pallets-shipping-android/**'
       - 'webapp/api/tc26_modify_pallet.php'
+      - 'webapp/api/pallets_shipping_tc26_app.php'
       - '.github/workflows/pallets-shipping-build.yml'
 
 jobs:
@@ -27,9 +28,11 @@ jobs:
         run: gradle -p pallets-shipping-android assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: Pallets-Shipping-TC26-2.0.40
+          name: Pallets-Shipping-TC26-2.0.41
           path: pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: TC26-2.0.40-Server-Patch
-          path: webapp/api/tc26_modify_pallet.php
+          name: TC26-2.0.41-Server-Patch
+          path: |
+            webapp/api/tc26_modify_pallet.php
+            webapp/api/pallets_shipping_tc26_app.php
