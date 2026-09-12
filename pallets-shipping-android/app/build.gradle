@@ -4,7 +4,7 @@ android {
     namespace 'com.smproduce.palletsshipping'
     compileSdk 35
     defaultConfig {
-        // Keep the same package used by the working TC26 2.0.36 APK.
+        // Clean source build matching the package identity used by the installable TC26 2.0.36 APK.
         applicationId 'com.smproduce.palletsshipping.tablet.tools'
         minSdk 26
         targetSdk 35
