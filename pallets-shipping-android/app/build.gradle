@@ -4,14 +4,16 @@ android {
     namespace 'com.smproduce.palletsshipping'
     compileSdk 35
     defaultConfig {
-        applicationId 'com.smproduce.palletsshipping'
+        // Keep the same package used by the working TC26 2.0.36 APK.
+        applicationId 'com.smproduce.palletsshipping.tablet.tools'
         minSdk 26
         targetSdk 35
-        versionCode 19
-        versionName '2.0.5-mix'
-        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_mix_app.php"'
+        versionCode 60
+        versionName '2.0.40-tc26'
+        buildConfigField 'String', 'API_URL', '"https://smproduceprod.uk/api/pallets_shipping_app.php"'
         buildConfigField 'String', 'APP_TOKEN', '"SMPS_2026_8e04f770b72d4ceeb9d9"'
-        buildConfigField 'String', 'SHIPPING_API_URL', '"https://smproduceprod.uk/pages/api/tc26_shipping_mix_api.php"'
+        buildConfigField 'String', 'SHIPPING_API_URL', '"https://smproduceprod.uk/pages/api/tc26_shipping_api.php"'
+        buildConfigField 'String', 'MODIFY_API_URL', '"https://smproduceprod.uk/api/tc26_modify_pallet.php"'
     }
     buildFeatures { buildConfig true }
 }
