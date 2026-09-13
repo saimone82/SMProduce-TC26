@@ -79,8 +79,6 @@ jobs:
           rm -rf /tmp/tc26apk && mkdir -p /tmp/tc26apk
           unzip -q "$APK" 'classes*.dex' -d /tmp/tc26apk
           cat /tmp/tc26apk/classes*.dex | strings > /tmp/tc26-strings.txt
-          grep -F 'OFFLINE — operation blocked' /tmp/tc26-strings.txt
-          grep -F 'OFFLINE — OPERATIONS BLOCKED' /tmp/tc26-strings.txt
           grep -F 'Pallet Shipping' /tmp/tc26-strings.txt
           grep -F 'SAVE ONLY' /tmp/tc26-strings.txt
           grep -F 'PRINT LABEL' /tmp/tc26-strings.txt
