@@ -36,7 +36,6 @@ jobs:
           MAIN='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/MainActivity.java'
           TC26='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java'
           SCAN='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/ScannerActivity.java'
-          COMPLETE='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/PalletCompleteDialog.java'
           GRADLE='pallets-shipping-android/app/build.gradle'
           MANIFEST='pallets-shipping-android/app/src/main/AndroidManifest.xml'
           grep -F "applicationId 'com.smproduce.palletsshipping.tc26complete246'" "$GRADLE"
@@ -99,9 +98,8 @@ jobs:
           grep -F 'PRINT LABEL' /tmp/tc26-strings.txt
           grep -F 'DELETE pallet' /tmp/tc26-strings.txt
           grep -F 'SELECT ANOTHER PALLET' /tmp/tc26-strings.txt
-          grep -F 'CASE → PALLET' /tmp/tc26-strings.txt
-          grep -F 'PALLET → CASES' /tmp/tc26-strings.txt
           grep -F 'scanner_pallet_lookup' /tmp/tc26-strings.txt
+          grep -F 'scanner_case_lookup' /tmp/tc26-strings.txt
           grep -F 'pallet_complete_context' /tmp/tc26-strings.txt
           if grep -Fq 'SM PRODUCE TC26' /tmp/tc26-strings.txt; then
             echo 'Unwanted version badge found in APK' >&2
