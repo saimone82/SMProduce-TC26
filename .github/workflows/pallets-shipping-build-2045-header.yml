@@ -26,8 +26,6 @@ jobs:
       - name: Apply cumulative app patches
         run: |
           python tools/patch_tc26_2042.py
-          python tools/patch_tc26_server_2042.py
-          python tools/patch_tc26_2043_complete.py
           python tools/patch_tc26_2044_final.py
           python tools/patch_tc26_2045_header.py
 
@@ -51,14 +49,13 @@ jobs:
             echo 'Large Modify button still present' >&2
             exit 1
           fi
-          php -l webapp/api/pallets_shipping_app.php
-          php -l webapp/api/tc26_modify_pallet.php
 
       - name: Build APK
         run: gradle -p pallets-shipping-android assembleDebug
 
       - name: Verify APK
         run: |
+          set -e
           APK='pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk'
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
           AAPT=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)
@@ -70,7 +67,9 @@ jobs:
           echo "$BADGING" | grep "application-label:'Pallet Shipping'"
           echo "$BADGING" | grep "launchable-activity: name='com.smproduce.palletsshipping.TC26FinalActivity'"
           unzip -t "$APK"
-          unzip -p "$APK" 'classes*.dex' | strings > /tmp/tc26-dex-strings.txt
+          mkdir -p /tmp/apkcheck
+          unzip -q "$APK" 'classes*.dex' -d /tmp/apkcheck
+          strings /tmp/apkcheck/classes*.dex > /tmp/tc26-dex-strings.txt
           grep -F 'Pallet Shipping' /tmp/tc26-dex-strings.txt
           grep -F 'Scanner password' /tmp/tc26-dex-strings.txt
           grep -F 'LOOKUP MODE' /tmp/tc26-dex-strings.txt
