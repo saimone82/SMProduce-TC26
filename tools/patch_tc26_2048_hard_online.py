@@ -101,18 +101,17 @@ if n != 1:
     raise SystemExit('callScanOrQueue function not found')
 
 # No old local queue is ever auto-submitted by this protected build.
-s, n = re.subn(r'    void syncQueue\(\)\{.*?\n    \}\n    void refreshCurrent',
-                 '    void syncQueue(){ /* Offline mutation queue intentionally disabled. */ }\n    void refreshCurrent',
-                 s, count=1, flags=re.S)
-if n != 1:
+start = s.find('    void syncQueue(){')
+end = s.find('    void refreshCurrent(){', start)
+if start < 0 or end < 0:
     raise SystemExit('syncQueue function not found')
+s = s[:start] + '    void syncQueue(){ /* Offline mutation queue intentionally disabled. */ }\n' + s[end:]
 
 s = s.replace(
     'String scanStatus=tr("Ready to scan","Listo para escanear")+(online?"":"\\n"+tr("Scans will be synchronized automatically","Las lecturas se sincronizarán automáticamente"));',
     'String scanStatus=online?tr("Ready to scan","Listo para escanear"):tr("OFFLINE — OPERATIONS BLOCKED","SIN CONEXIÓN — OPERACIONES BLOQUEADAS");',
     1)
 
-# Version reported by the Android base is provided by Tc26MainActivity, but keep package/version unique for install safety.
 main.write_text(s)
 
 # TC26 activity + scanner report the new cumulative build number.
