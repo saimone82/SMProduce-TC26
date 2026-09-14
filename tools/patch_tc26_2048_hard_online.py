@@ -112,6 +112,40 @@ s = s.replace(
     'String scanStatus=online?tr("Ready to scan","Listo para escanear"):tr("OFFLINE — OPERATIONS BLOCKED","SIN CONEXIÓN — OPERACIONES BLOQUEADAS");',
     1)
 
+# A valid JSON response proves that the production server is reachable even when an
+# older API does not implement ping with ok=1. Also do not rely on Android's
+# NET_CAPABILITY_INTERNET flag, which can be false on otherwise usable warehouse Wi-Fi.
+old_network = '''    void checkNetwork(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);boolean internet=cap!=null&&cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);if(!internet)setOnlineState(false);else probeServer();}
+    void probeServer(){if(probing||io.isShutdown())return;ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);if(cap==null||!cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)){setOnlineState(false);return;}probing=true;io.execute(()->{boolean reachable=false;try{JSONObject j=request(map("action","ping"));reachable=j.optInt("ok")==1;}catch(Exception ignored){}boolean ok=reachable;runOnUiThread(()->{boolean was=online;probing=false;setOnlineState(ok);if(ok&&!was)syncQueue();});});}
+'''
+new_network = '''    void checkNetwork(){
+        ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+        Network n=cm.getActiveNetwork();
+        if(n==null){setOnlineState(false);return;}
+        probeServer();
+    }
+    void probeServer(){
+        if(probing||io.isShutdown())return;
+        ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+        if(cm.getActiveNetwork()==null){setOnlineState(false);return;}
+        probing=true;
+        io.execute(()->{
+            boolean reachable=false;
+            try{
+                // Parsing any JSON response proves that this API endpoint is reachable.
+                // Operations still remain server-authoritative and may return their own error.
+                JSONObject response=request(map("action","ping"));
+                reachable=response!=null;
+            }catch(Exception ignored){}
+            boolean ok=reachable;
+            runOnUiThread(()->{probing=false;setOnlineState(ok);});
+        });
+    }
+'''
+if old_network not in s:
+    raise SystemExit('network probe block not found')
+s = s.replace(old_network, new_network, 1)
+
 main.write_text(s)
 
 # TC26 activity + scanner report the new cumulative build number.
