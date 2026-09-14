@@ -1,0 +1,93 @@
+name: Build TC26 2.0.48
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/tc26-modify-from-36
+    paths:
+      - 'pallets-shipping-android/**'
+      - 'tools/patch_tc26_2046_cumulative.py'
+      - 'tools/patch_tc26_2046_complete_rules.py'
+      - 'tools/patch_tc26_2046_modify_base_api.py'
+      - 'tools/patch_tc26_2047_ui_status_popup.py'
+      - 'tools/patch_tc26_2048_hard_online.py'
+      - '.github/workflows/pallets-shipping-build-2048.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Apply cumulative TC26 patches
+        run: |
+          python tools/patch_tc26_2046_cumulative.py
+          python tools/patch_tc26_2046_complete_rules.py
+          python tools/patch_tc26_2046_modify_base_api.py
+          python tools/patch_tc26_2047_ui_status_popup.py
+          python tools/patch_tc26_2048_hard_online.py
+
+      - name: Verify hard online-only protection
+        run: |
+          MAIN='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/MainActivity.java'
+          TC26='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java'
+          POP='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/ShippingPalletDialog.java'
+          GRADLE='pallets-shipping-android/app/build.gradle'
+          grep -F "applicationId 'com.smproduce.palletsshipping.tc26complete248'" "$GRADLE"
+          grep -F "versionName '2.0.48-tc26'" "$GRADLE"
+          grep -F 'offlineBlocked()' "$MAIN"
+          grep -F 'OFFLINE — OPERATIONS BLOCKED' "$MAIN"
+          grep -F 'Offline mutation queue intentionally disabled' "$MAIN"
+          grep -F 'if(!online){offlineBlocked();return;}' "$MAIN"
+          grep -F 'Pallet Shipping' "$TC26"
+          grep -F 'showSaveChoice("OPEN")' "$TC26"
+          grep -F 'showSaveChoice("PARTIAL")' "$TC26"
+          grep -F 'showSaveChoice("COMPLETE")' "$TC26"
+          grep -F 'ShippingPalletDialog' "$TC26"
+          grep -F 'Total cases on pallet' "$POP"
+          if grep -Fq 'Offline pallet created' "$MAIN"; then echo 'Offline pallet creation remains' >&2; exit 1; fi
+          if grep -Fq 'Saved offline: ' "$MAIN"; then echo 'Offline scan queue remains' >&2; exit 1; fi
+          if grep -Fq 'Scans will be synchronized automatically' "$MAIN"; then echo 'Offline synchronization UI remains' >&2; exit 1; fi
+          if grep -Fq 'queue.add("CREATE_PALLET"' "$MAIN"; then echo 'Offline CREATE_PALLET queue remains' >&2; exit 1; fi
+          if grep -Fq 'Camera: REAR' "$MAIN" || grep -Fq 'Camera: FRONT' "$MAIN"; then echo 'Camera FRONT/REAR regression' >&2; exit 1; fi
+          if grep -Fq 'tablet.tools' "$GRADLE"; then echo 'Tablet package regression' >&2; exit 1; fi
+
+      - name: Build Android APK
+        run: gradle -p pallets-shipping-android assembleDebug
+
+      - name: Verify APK
+        run: |
+          set -e
+          APK='pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk'
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          AAPT=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          BADGING=$("$AAPT" dump badging "$APK")
+          echo "$BADGING" | grep "package: name='com.smproduce.palletsshipping.tc26complete248'"
+          echo "$BADGING" | grep "versionName='2.0.48-tc26'"
+          echo "$BADGING" | grep "application-label:'Pallet Shipping'"
+          echo "$BADGING" | grep "launchable-activity: name='com.smproduce.palletsshipping.Tc26MainActivity'"
+          unzip -t "$APK"
+          rm -rf /tmp/tc26apk && mkdir -p /tmp/tc26apk
+          unzip -q "$APK" 'classes*.dex' -d /tmp/tc26apk
+          cat /tmp/tc26apk/classes*.dex | strings > /tmp/tc26-strings.txt
+          grep -F 'Pallet Shipping' /tmp/tc26-strings.txt
+          grep -F 'SAVE ONLY' /tmp/tc26-strings.txt
+          grep -F 'PRINT LABEL' /tmp/tc26-strings.txt
+          grep -F 'Total cases on pallet' /tmp/tc26-strings.txt
+          if grep -Fq 'Offline pallet created' /tmp/tc26-strings.txt; then echo 'Offline pallet creation found in APK' >&2; exit 1; fi
+          if grep -Fq 'Saved offline: ' /tmp/tc26-strings.txt; then echo 'Offline queue text found in APK' >&2; exit 1; fi
+          if grep -Fq 'Scans will be synchronized automatically' /tmp/tc26-strings.txt; then echo 'Offline sync text found in APK' >&2; exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pallet-Shipping-TC26-2.0.48
+          path: pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk

@@ -1,0 +1,57 @@
+name: Build TC26 2.0.43 Complete
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/tc26-modify-from-36
+    paths:
+      - 'tools/patch_tc26_2043_complete.py'
+      - 'tools/tc26_complete_activity.b64'
+      - 'tools/tc26_scanner_activity.b64'
+      - '.github/workflows/pallets-shipping-build-2043-complete.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Apply TC26 2.0.43 complete patches
+        run: |
+          python tools/patch_tc26_2042.py
+          python tools/patch_tc26_server_2042.py
+          python tools/patch_tc26_2043_complete.py
+
+      - name: Validate server PHP
+        run: |
+          php -l webapp/api/pallets_shipping_app.php
+          php -l webapp/api/tc26_modify_pallet.php
+
+      - name: Build Android APK
+        run: gradle -p pallets-shipping-android assembleDebug
+
+      - name: Verify APK package signature and launcher
+        run: |
+          APK='pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk'
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          AAPT=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          BADGING=$("$AAPT" dump badging "$APK")
+          echo "$BADGING" | head -30
+          echo "$BADGING" | grep "package: name='com.smproduce.palletsshipping.tc26complete'"
+          echo "$BADGING" | grep "versionName='2.0.43-tc26-complete'"
+          echo "$BADGING" | grep "launchable-activity: name='com.smproduce.palletsshipping.Tc26CompleteActivity'"
+          unzip -t "$APK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pallets-Shipping-TC26-2.0.43-COMPLETE
+          path: pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk

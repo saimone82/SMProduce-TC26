@@ -1,16 +1,14 @@
-name: Build Pallets Shipping APK
+name: Build Pallets Shipping APK 2.0.42
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
       - fix/tc26-modify-from-36
     paths:
-      - 'pallets-shipping-android/**'
-      - 'webapp/api/tc26_modify_pallet.php'
-      - 'webapp/api/pallets_shipping_tc26_app.php'
-      - '.github/workflows/pallets-shipping-build.yml'
+      - 'tools/patch_tc26_2042.py'
+      - 'tools/patch_tc26_server_2042.py'
+      - '.github/workflows/pallets-shipping-build-2042.yml'
 
 jobs:
   build:
@@ -24,15 +22,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build APK with Android/Gradle
+      - name: Apply patches
+        run: |
+          python tools/patch_tc26_2042.py
+          python tools/patch_tc26_server_2042.py
+      - name: Build APK
         run: gradle -p pallets-shipping-android assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: Pallets-Shipping-TC26-2.0.41
+          name: Pallets-Shipping-TC26-2.0.42
           path: pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: TC26-2.0.41-Server-Patch
+          name: TC26-2.0.42-Server-Patch
           path: |
+            webapp/api/pallets_shipping_app.php
             webapp/api/tc26_modify_pallet.php
-            webapp/api/pallets_shipping_tc26_app.php

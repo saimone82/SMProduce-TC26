@@ -1,0 +1,146 @@
+package com.smproduce.palletsshipping;
+
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.graphics.Color;
+import android.text.InputType;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Space;
+import android.widget.TextView;
+
+import java.util.Map;
+
+public class TC26FinalActivity extends Tc26MainActivity {
+    private static final String APP_VERSION = "2.0.45-tc26";
+
+    @Override Map<String,String> map(String... values) {
+        Map<String,String> params = super.map(values);
+        params.put("app_version", APP_VERSION);
+        return params;
+    }
+
+    @Override void buildShell() {
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(11,22,34));
+
+        FrameLayout header = new FrameLayout(this);
+        header.setBackgroundColor(Color.rgb(19,32,51));
+        header.setPadding(dp(10), dp(6), dp(8), dp(6));
+
+        network = tv("", 12, Color.LTGRAY);
+        network.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams netLp = new FrameLayout.LayoutParams(dp(96), dp(52), Gravity.START | Gravity.CENTER_VERTICAL);
+        header.addView(network, netLp);
+
+        TextView app = tv("Pallet Shipping", 19, Color.WHITE);
+        app.setTypeface(null, 1);
+        app.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams appLp = new FrameLayout.LayoutParams(-2, dp(52), Gravity.CENTER);
+        header.addView(app, appLp);
+
+        LinearLayout tools = new LinearLayout(this);
+        tools.setOrientation(LinearLayout.HORIZONTAL);
+        tools.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+
+        ImageButton scannerTop = new ImageButton(this);
+        scannerTop.setImageResource(android.R.drawable.ic_menu_camera);
+        scannerTop.setColorFilter(Color.WHITE);
+        scannerTop.setBackgroundColor(Color.TRANSPARENT);
+        scannerTop.setContentDescription("Scanner");
+        scannerTop.setPadding(dp(10), dp(10), dp(10), dp(10));
+        scannerTop.setOnClickListener(v -> openScanner());
+        tools.addView(scannerTop, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        ImageButton modifyTop = new ImageButton(this);
+        modifyTop.setImageResource(android.R.drawable.ic_menu_edit);
+        modifyTop.setColorFilter(Color.WHITE);
+        modifyTop.setBackgroundColor(Color.TRANSPARENT);
+        modifyTop.setContentDescription("Modify Existing Pallet");
+        modifyTop.setPadding(dp(10), dp(10), dp(10), dp(10));
+        modifyTop.setOnClickListener(v -> requestPalletEditPassword());
+        tools.addView(modifyTop, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        FrameLayout.LayoutParams toolLp = new FrameLayout.LayoutParams(-2, dp(52), Gravity.END | Gravity.CENTER_VERTICAL);
+        header.addView(tools, toolLp);
+        root.addView(header, new LinearLayout.LayoutParams(-1, dp(64)));
+
+        LinearLayout utility = new LinearLayout(this);
+        utility.setOrientation(LinearLayout.HORIZONTAL);
+        utility.setGravity(Gravity.CENTER_VERTICAL);
+        utility.setPadding(dp(10), dp(4), dp(10), dp(4));
+        utility.setBackgroundColor(Color.rgb(15,27,42));
+
+        back = button("Back", Color.rgb(52,65,85));
+        back.setTextSize(13);
+        back.setOnClickListener(v -> goBack());
+        utility.addView(back, new LinearLayout.LayoutParams(dp(82), dp(42)));
+
+        progress = tv("", 12, Color.rgb(110,140,170));
+        progress.setGravity(Gravity.CENTER);
+        utility.addView(progress, new LinearLayout.LayoutParams(0, dp(42), 1));
+
+        lang = button("EN", Color.rgb(25,118,210));
+        lang.setTextSize(13);
+        lang.setOnClickListener(v -> {
+            spanish = !spanish;
+            lang.setText(spanish ? "ES" : "EN");
+            render();
+        });
+        utility.addView(lang, new LinearLayout.LayoutParams(dp(58), dp(42)));
+        root.addView(utility, new LinearLayout.LayoutParams(-1, dp(50)));
+
+        nav = new LinearLayout(this);
+        nav.setPadding(dp(14), dp(10), dp(14), dp(14));
+        nav.setGravity(Gravity.CENTER);
+        next = button("Next", Color.rgb(25,118,210));
+        next.setOnClickListener(v -> goNext());
+        nav.addView(next, new LinearLayout.LayoutParams(-1, dp(56)));
+        root.addView(nav);
+
+        body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setGravity(Gravity.CENTER_HORIZONTAL);
+        body.setPadding(dp(18), dp(16), dp(18), dp(12));
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        setContentView(root);
+    }
+
+    private void openScanner() {
+        if (!online) {
+            error(tr("Connect to the server before opening Scanner", "Conéctese al servidor antes de abrir el Escáner"));
+            return;
+        }
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(tr("Scanner password", "Contraseña del escáner"))
+                .setMessage(tr("Enter the protected PIN", "Introduzca el PIN protegido"))
+                .setView(input)
+                .setNegativeButton(tr("Cancel", "Cancelar"), null)
+                .setPositiveButton(tr("Open", "Abrir"), null)
+                .create();
+        dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String pin = input.getText().toString().trim();
+            if (pin.isEmpty()) return;
+            call(map("action", "scanner_unlock", "password", pin), j -> {
+                if (!dialog.isShowing()) return;
+                dialog.dismiss();
+                Intent intent = new Intent(this, ScannerActivity.class);
+                intent.putExtra("scanner_password", pin);
+                startActivity(intent);
+            });
+        }));
+        dialog.show();
+    }
+}
