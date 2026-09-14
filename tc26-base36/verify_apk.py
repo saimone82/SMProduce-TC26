@@ -39,7 +39,8 @@ def resolve(owner,name,desc,kind):
 
 with zipfile.ZipFile(out_path) as z:overlay=DEX(z.read('classes7.dex'))
 for c in overlay.get_classes():
- assert c.get_name().startswith('Lcom/smproduce/palletsshipping/Recovery36Activity'), 'Compile-only stub packaged: '+c.get_name()
+ assert c.get_name().startswith(('Lcom/smproduce/palletsshipping/Recovery36Activity',
+     'Lcom/android/tools/r8/annotations/')), 'Compile-only stub packaged: '+c.get_name()
 for item in overlay.get_methods():
  owner,name,desc=item.get_class_name(),item.get_name(),item.get_descriptor()
  if owner.startswith('Lcom/smproduce/'):
