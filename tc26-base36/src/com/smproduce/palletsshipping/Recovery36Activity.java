@@ -194,13 +194,23 @@ public class Recovery36Activity extends TC26Activity {
         });
     }
     private void save(String status,int printer) {
-        Success saved=j->{editDirty=false;if(printer>0)modify(map("action","print_label","pallet_id",palletId,
-                "status",status,"printer_id",String.valueOf(printer),"password",modifyPin),x->done("Pallet "+palletId+" · label sent"));
-            else done("Pallet "+palletId+" · "+status+" · saved without printing");};
+        final String id=palletId;
+        Success saved=j->{editDirty=false;
+            if(printer>0 && j.optInt("label_printed",0)!=1) {
+                error("Pallet saved, but label delivery was not confirmed. Check the printer before retrying.");return;
+            }
+            done("Pallet "+id+" · "+status+(printer>0?" · label sent":" · saved without printing"));};
+        Map<String,String> statusRequest=map("action","set_status","pallet_id",id,"status",status,
+                "print_label",printer>0?"1":"0","printer_id",String.valueOf(printer),"password",modifyPin);
         if("COMPLETE".equals(status)) {
             // Original 36 Complete interceptor retains customer/SKU quantity and PIN rules.
-            call(map("action","pallet_save_no_print","pallet_id",palletId,"password",modifyPin,"print_label","0"),saved);
-        }else modify(map("action","set_status","pallet_id",palletId,"status",status,"print_label","0","password",modifyPin),saved);
+            // The existing Modify API prints via set_status, not a print_label action.
+            // Never send COMPLETE there before the original guarded closure succeeds.
+            call(map("action","pallet_save_no_print","pallet_id",id,"password",modifyPin,"print_label","0"),j->{
+                editDirty=false;
+                if(printer>0)modify(statusRequest,saved);else saved.run(j);
+            });
+        }else modify(statusRequest,saved);
     }
     private void deletePrompt() {
         if(!requireNetwork())return;
