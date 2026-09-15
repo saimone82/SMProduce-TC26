@@ -1,5 +1,5 @@
 <?php
-// SM Produce Bins Receiving API v1.1.2
+// SM Produce Bins Receiving API v1.1.7
 header('Content-Type: application/json; charset=utf-8');
 
 $TOKEN = 'SMTC26_SECURE_2026';
@@ -17,7 +17,23 @@ $_SESSION['user'] = [
     'role' => 'warehouse',
 ];
 
-require_once __DIR__ . '/../../config/db_remote.php';
+/*
+ * This endpoint may be installed in either /pages/api (preferred) or /api.
+ * Resolve the SM Produce application root instead of relying on one fixed
+ * relative path. The old /api copy walked up two levels and incorrectly
+ * looked for C:\xampp\htdocs\config\db_remote.php.
+ */
+$appRoot = dirname(__DIR__, 2);
+if (!is_file($appRoot . '/config/db_remote.php')) {
+    $appRoot = dirname(__DIR__);
+}
+$dbFile = $appRoot . '/config/db_remote.php';
+if (!is_file($dbFile)) {
+    http_response_code(500);
+    echo json_encode(['ok'=>false,'error'=>'Server configuration file not found']);
+    exit;
+}
+require_once $dbFile;
 $action = trim((string)($_REQUEST['api_action'] ?? 'presets'));
 
 /* Password-protected record editor used by Bins Receiving 1.1.3+. */
@@ -156,7 +172,7 @@ if ($action === 'save_empty') {
     $_POST['date'] = trim((string)($_POST['date'] ?? date('Y-m-d')));
     $_POST['carrier'] = trim((string)($_POST['carrier'] ?? ''));
     $_POST['notes'] = trim((string)($_POST['notes'] ?? ''));
-    require __DIR__ . '/../empty_bin_receiving.php';
+    require $appRoot . '/pages/empty_bin_receiving.php';
     exit;
 }
 
@@ -170,7 +186,7 @@ if ($action === 'save_full') {
     $_POST['quantity'] = max(1, (int)($_POST['quantity'] ?? 1));
     $_POST['date'] = trim((string)($_POST['date'] ?? date('Y-m-d')));
     $_POST['notes'] = trim((string)($_POST['notes'] ?? ''));
-    require __DIR__ . '/../bins_ingresso.php';
+    require $appRoot . '/pages/bins_ingresso.php';
     exit;
 }
 
