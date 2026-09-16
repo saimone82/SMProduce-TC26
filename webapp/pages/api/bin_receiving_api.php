@@ -37,7 +37,7 @@ require_once $dbFile;
 $action = trim((string)($_REQUEST['api_action'] ?? 'presets'));
 
 /* Password-protected record editor used by Bins Receiving 1.1.3+. */
-$EDIT_PASSWORD = 'Apples2424';
+$EDIT_PASSWORD = '2424';
 $requireEditPassword = static function() use ($EDIT_PASSWORD): void {
     $password = (string)($_POST['edit_password'] ?? '');
     if (!hash_equals($EDIT_PASSWORD, $password)) {

@@ -5,6 +5,7 @@ import android.content.*;
 import android.graphics.Color;
 import android.net.*;
 import android.os.*;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.view.*;
 import android.widget.*;
@@ -18,8 +19,8 @@ import java.util.*;
 public class MainActivity extends Activity {
     final int BG=Color.rgb(7,17,31), PANEL=Color.rgb(13,29,48), BLUE=Color.rgb(25,118,210), GREEN=Color.rgb(22,163,74), RED=Color.rgb(185,28,28), GRAY=Color.rgb(71,85,105), ORANGE=Color.rgb(217,119,6);
     static final String PREFS="bins", CACHE_GROWERS="cache_growers", CACHE_TYPES="cache_types", CACHE_VARIETIES="cache_varieties", QUEUE_KEY="offline_queue";
-    static final String EDIT_PASSWORD="Apples2424";
-    LinearLayout root,body,bar; TextView step,status; Button back,home,lang;
+    static final String EDIT_PASSWORD="2424";
+    LinearLayout root,body,bar; TextView step,status; Button back,home,lang,settings;
     boolean es=false; String mode="",grower="",type="",variety="",lot="",currentScreen="home"; int qty=0;
     ArrayList<String> growers=new ArrayList<>(),types=new ArrayList<>(),varieties=new ArrayList<>();
     final Handler ui=new Handler(Looper.getMainLooper());
@@ -38,24 +39,24 @@ public class MainActivity extends Activity {
 
     void shell(){
         root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BG);
-        bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(dp(10),dp(7),dp(10),dp(7));bar.setBackgroundColor(PANEL);
-        back=button("‹ BACK",16);back.setVisibility(View.INVISIBLE);back.setOnClickListener(v->goBack());bar.addView(back,new LinearLayout.LayoutParams(dp(120),dp(58)));
-        home=button("HOME",16);home.setVisibility(View.INVISIBLE);home.setOnClickListener(v->showMode());LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(dp(115),dp(58));hp.setMargins(dp(6),0,0,0);bar.addView(home,hp);
+        bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(0,dp(7),dp(10),dp(7));bar.setBackgroundColor(PANEL);
+        status=text("",13);status.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);status.setPadding(dp(10),0,0,0);bar.addView(status,new LinearLayout.LayoutParams(dp(118),dp(58)));
+        back=button("‹ BACK",16);back.setVisibility(View.INVISIBLE);back.setOnClickListener(v->goBack());bar.addView(back,new LinearLayout.LayoutParams(dp(110),dp(58)));
+        home=button("HOME",16);home.setVisibility(View.INVISIBLE);home.setOnClickListener(v->showMode());LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(dp(100),dp(58));hp.setMargins(dp(6),0,0,0);bar.addView(home,hp);
         TextView title=text("BINS RECEIVING",25);title.setTypeface(null,1);bar.addView(title,new LinearLayout.LayoutParams(0,dp(58),1));
         lang=button(es?"ES":"EN",16);lang.setOnClickListener(v->{es=!es;prefs.edit().putBoolean("es",es).apply();lang.setText(es?"ES":"EN");redrawCurrent();});bar.addView(lang,new LinearLayout.LayoutParams(dp(90),dp(58)));
         root.addView(bar,new LinearLayout.LayoutParams(-1,-2));
-        step=text("",15);step.setTextColor(Color.rgb(148,163,184));root.addView(step,new LinearLayout.LayoutParams(-1,dp(38)));
-        body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setGravity(Gravity.CENTER);body.setPadding(dp(38),dp(16),dp(38),dp(18));root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);footer.setPadding(dp(10),dp(4),dp(10),dp(4));footer.setBackgroundColor(Color.rgb(10,23,40));
-        Button fullList=button(t("EDIT FULL BINS","EDITAR LLENOS"),15);fullList.setBackgroundColor(GREEN);fullList.setOnClickListener(v->askListPassword("full"));footer.addView(fullList,new LinearLayout.LayoutParams(dp(180),dp(52)));
-        Button emptyList=button(t("EDIT EMPTY BINS","EDITAR VACÍOS"),15);emptyList.setBackgroundColor(Color.rgb(14,116,144));emptyList.setOnClickListener(v->askListPassword("empty"));LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(dp(190),dp(52));ep.setMargins(dp(8),0,0,0);footer.addView(emptyList,ep);
-        root.addView(footer,new LinearLayout.LayoutParams(-1,dp(60)));
-        status=text("",13);status.setTextColor(Color.rgb(203,213,225));status.setBackgroundColor(PANEL);root.addView(status,new LinearLayout.LayoutParams(-1,dp(30)));setContentView(root);
+        FrameLayout utilityRow=new FrameLayout(this);utilityRow.setBackgroundColor(BG);
+        step=text("",15);step.setTextColor(Color.rgb(148,163,184));utilityRow.addView(step,new FrameLayout.LayoutParams(-1,dp(56)));
+        settings=button("⚙",28);settings.setContentDescription(t("Record editor","Editor de registros"));settings.setPadding(0,0,0,0);settings.setOnClickListener(v->showEditMenu());FrameLayout.LayoutParams sp=new FrameLayout.LayoutParams(dp(60),dp(54),Gravity.END|Gravity.TOP);sp.setMargins(0,dp(2),0,0);utilityRow.addView(settings,sp);
+        root.addView(utilityRow,new LinearLayout.LayoutParams(-1,dp(56)));
+        body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setGravity(Gravity.TOP|Gravity.CENTER_HORIZONTAL);body.setPadding(dp(38),dp(28),dp(38),dp(18));root.addView(body,new LinearLayout.LayoutParams(-1,0,1));
+        setContentView(root);
     }
     void setNav(boolean canBack){back.setVisibility(canBack?View.VISIBLE:View.INVISIBLE);home.setVisibility(canBack?View.VISIBLE:View.INVISIBLE);}
     void registerNetworkWatcher(){try{cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);netCallback=new ConnectivityManager.NetworkCallback(){@Override public void onAvailable(Network n){ui.post(()->{updateStatus();refreshPresetsAsync();syncQueueAsync();});}@Override public void onLost(Network n){ui.post(()->updateStatus());}};cm.registerDefaultNetworkCallback(netCallback);}catch(Exception ignored){}}
     boolean isOnline(){try{if(cm==null)cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();if(n==null)return false;NetworkCapabilities c=cm.getNetworkCapabilities(n);return c!=null&&c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);}catch(Exception e){return false;}}
-    void updateStatus(){int pending=pendingCount();String p=pending>0?(" • "+pending+" "+t("PENDING","PENDIENTE")):"";status.setText((isOnline()?t("ONLINE","EN LÍNEA"):t("OFFLINE MODE","MODO SIN CONEXIÓN"))+p);}
+    void updateStatus(){int pending=pendingCount();boolean online=isOnline();String p=pending>0?("\n"+pending+" "+t("PENDING","PENDIENTE")):"";status.setText((online?"● "+t("ONLINE","EN LÍNEA"):"● "+t("OFFLINE","SIN RED"))+p);status.setTextColor(online?Color.rgb(74,222,128):Color.rgb(253,224,71));}
 
     void loadCachedPresets(){growers=listFromString(prefs.getString(CACHE_GROWERS,"[]"));types=listFromString(prefs.getString(CACHE_TYPES,"[]"));varieties=listFromString(prefs.getString(CACHE_VARIETIES,"[]"));updateStatus();}
     ArrayList<String> listFromString(String raw){try{return list(new JSONArray(raw));}catch(Exception e){return new ArrayList<>();}}
@@ -63,7 +64,7 @@ public class MainActivity extends Activity {
     void refreshPresetsAsync(){if(refreshing||!isOnline())return;refreshing=true;new Thread(()->{try{JSONObject j=reqPresets();JSONArray ga=j.optJSONArray("growers"),ta=j.optJSONArray("binTypes"),va=j.optJSONArray("varieties");ArrayList<String> ng=list(ga),nt=list(ta),nv=list(va);prefs.edit().putString(CACHE_GROWERS,ga==null?"[]":ga.toString()).putString(CACHE_TYPES,ta==null?"[]":ta.toString()).putString(CACHE_VARIETIES,va==null?"[]":va.toString()).apply();ui.post(()->{growers=ng;types=nt;varieties=nv;updateStatus();if(currentScreen.equals("grower")||currentScreen.equals("type")||currentScreen.equals("variety"))redrawCurrent();});}catch(Exception e){ui.post(this::updateStatus);}finally{refreshing=false;}}).start();}
 
     void reset(){mode="";grower="";type="";variety="";lot="";qty=0;}
-    void showMode(){reset();currentScreen="home";clear();setNav(false);step.setText(t("START","INICIO"));question(t("WHAT ARE YOU RECEIVING?","¿QUÉ ESTÁS RECIBIENDO?"));big(t("EMPTY BINS","BINS VACÍOS"),Color.rgb(14,116,144),v->{mode="empty";showGrower();});big(t("FULL BINS","BINS LLENOS"),GREEN,v->{mode="full";showGrower();});updateStatus();}
+    void showMode(){reset();currentScreen="home";clear();setNav(false);step.setText(t("START","INICIO"));question(t("WHAT ARE YOU RECEIVING?","¿QUÉ ESTÁS RECIBIENDO?"));homeBig(t("EMPTY BINS","BINS VACÍOS"),Color.rgb(14,116,144),v->{mode="empty";showGrower();});homeBig(t("FULL BINS","BINS LLENOS"),GREEN,v->{mode="full";showGrower();});updateStatus();}
     void showGrower(){currentScreen="grower";clear();setNav(true);step.setText(mode.equals("empty")?t("EMPTY BINS — STEP 1","BINS VACÍOS — PASO 1"):t("FULL BINS — STEP 1","BINS LLENOS — PASO 1"));question(t("WHO IS THE GROWER?","¿QUIÉN ES EL GROWER?"));Button add=button(t("+ ADD NEW GROWER","+ AGREGAR NUEVO GROWER"),20);add.setBackgroundColor(ORANGE);add.setOnClickListener(v->showAddGrower());LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(-1,dp(72));ap.setMargins(0,0,0,dp(10));body.addView(add,ap);options(growers,grower,s->{grower=s;showType();});}
     void showAddGrower(){currentScreen="add_grower";clear();setNav(true);step.setText(t("NEW GROWER","NUEVO GROWER"));question(t("ENTER GROWER NAME","INGRESE NOMBRE DEL GROWER"));EditText e=input(false);e.setHint(t("Grower name","Nombre del grower"));body.addView(e,new LinearLayout.LayoutParams(dp(720),dp(92)));big(t("SAVE GROWER","GUARDAR GROWER"),GREEN,v->{String name=e.getText().toString().trim();if(name.isEmpty()){Toast.makeText(this,t("Enter a grower name","Ingrese un nombre"),Toast.LENGTH_SHORT).show();return;}addGrowerLocalAndQueue(name);});big(t("BACK","ATRÁS"),GRAY,v->showGrower());}
     void addGrowerLocalAndQueue(String name){String found=null;for(String g:growers)if(g.equalsIgnoreCase(name)){found=g;break;}if(found==null){growers.add(name);Collections.sort(growers,String.CASE_INSENSITIVE_ORDER);saveGrowerCache();found=name;LinkedHashMap<String,String> p=new LinkedHashMap<>();p.put("name",name);enqueue("add_grower",p,false);if(isOnline())syncQueueAsync();}grower=found;Toast.makeText(this,t("Grower selected","Grower seleccionado"),Toast.LENGTH_SHORT).show();showType();}
@@ -79,9 +80,16 @@ public class MainActivity extends Activity {
     void saveFast(boolean wantPrint){String action=mode.equals("empty")?"save_empty":"save_full";enqueue(action,currentPayload(wantPrint),wantPrint);showQueued(wantPrint);if(isOnline())syncQueueAsync();}
     void showQueued(boolean wantPrint){currentScreen="done";clear();setNav(false);step.setText(t("SAVED","GUARDADO"));question(t("RECORD SAVED","REGISTRO GUARDADO"));String msg;if(isOnline())msg=wantPrint?t("Saved immediately. Sending and printing in background.","Guardado inmediatamente. Enviando e imprimiendo en segundo plano."):t("Saved immediately. Sending to the server in background.","Guardado inmediatamente. Enviando al servidor en segundo plano.");else msg=wantPrint?t("Saved on the tablet. It will sync and print automatically when internet returns.","Guardado en la tableta. Se sincronizará e imprimirá cuando vuelva internet."):t("Saved on the tablet. It will sync automatically when internet returns.","Guardado en la tableta. Se sincronizará cuando vuelva internet.");TextView x=text(msg,20);x.setTextColor(isOnline()?Color.rgb(134,239,172):Color.rgb(253,224,71));x.setPadding(dp(30),0,dp(30),dp(14));body.addView(x);big(t("NEW RECEIVING","NUEVA RECEPCIÓN"),GREEN,v->showMode());updateStatus();}
 
+    void showEditMenu(){
+        LinearLayout menu=new LinearLayout(this);menu.setOrientation(LinearLayout.VERTICAL);menu.setPadding(dp(22),dp(10),dp(22),dp(12));
+        Button fullList=button(t("EDIT FULL BINS","EDITAR BINS LLENOS"),20);fullList.setBackgroundColor(GREEN);menu.addView(fullList,new LinearLayout.LayoutParams(dp(420),dp(78)));
+        Button emptyList=button(t("EDIT EMPTY BINS","EDITAR BINS VACÍOS"),20);emptyList.setBackgroundColor(Color.rgb(14,116,144));LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(dp(420),dp(78));ep.setMargins(0,dp(12),0,0);menu.addView(emptyList,ep);
+        AlertDialog dlg=new AlertDialog.Builder(this).setTitle(t("RECORD EDITOR","EDITOR DE REGISTROS")).setView(menu).setNegativeButton(t("CANCEL","CANCELAR"),null).create();
+        fullList.setOnClickListener(v->{dlg.dismiss();askListPassword("full");});emptyList.setOnClickListener(v->{dlg.dismiss();askListPassword("empty");});dlg.show();
+    }
     void askListPassword(String kind){
         if(!isOnline()){Toast.makeText(this,t("Internet is required to edit records","Se requiere internet para editar registros"),Toast.LENGTH_LONG).show();return;}
-        EditText e=input(false);e.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);e.setHint(t("Password","Contraseña"));
+        EditText e=input(true);e.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_VARIATION_PASSWORD);e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4)});e.setHint(t("4-digit PIN","PIN de 4 dígitos"));
         new AlertDialog.Builder(this).setTitle(t("Protected records","Registros protegidos")).setView(e)
             .setNegativeButton(t("CANCEL","CANCELAR"),null).setPositiveButton("OK",(d,w)->{
                 String password=e.getText().toString();if(!EDIT_PASSWORD.equals(password)){Toast.makeText(this,t("Wrong password","Contraseña incorrecta"),Toast.LENGTH_SHORT).show();return;}loadRecords(kind,password);
@@ -142,6 +150,7 @@ public class MainActivity extends Activity {
     interface Pick{void go(String s);}void options(ArrayList<String> a,String selected,Pick p){ScrollView sv=new ScrollView(this);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);list.setGravity(Gravity.CENTER);sv.addView(list);body.addView(sv,new LinearLayout.LayoutParams(-1,0,1));for(String s:a){Button b=button((s.equals(selected)?"✓ ":"")+s,21);b.setBackgroundColor(s.equals(selected)?Color.rgb(30,64,175):PANEL);b.setOnClickListener(v->p.go(s));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(72));lp.setMargins(0,dp(4),0,dp(4));list.addView(b,lp);}if(a.isEmpty())list.addView(text(t("No presets available yet","No hay presets disponibles"),20));}
     void question(String s){TextView q=text(s,32);q.setTypeface(null,1);q.setPadding(0,0,0,dp(16));body.addView(q);}
     void big(String s,int color,View.OnClickListener l){Button b=button(s,21);b.setBackgroundColor(color);b.setOnClickListener(l);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(760),dp(82));p.setMargins(0,dp(8),0,0);body.addView(b,p);}
+    void homeBig(String s,int color,View.OnClickListener l){Button b=button(s,27);b.setTypeface(null,1);b.setBackgroundColor(color);b.setOnClickListener(l);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(820),dp(104));p.setMargins(0,dp(12),0,0);body.addView(b,p);}
     Button button(String s,int size){Button b=new Button(this);b.setText(s);b.setTextSize(size);b.setTextColor(Color.WHITE);b.setAllCaps(false);b.setBackgroundColor(Color.rgb(30,41,59));return b;}
     TextView text(String s,int size){TextView v=new TextView(this);v.setText(s);v.setTextSize(size);v.setTextColor(Color.WHITE);v.setGravity(Gravity.CENTER);return v;}
     EditText input(boolean numeric){EditText e=new EditText(this);e.setTextColor(Color.WHITE);e.setHintTextColor(Color.rgb(148,163,184));e.setTextSize(numeric?42:30);e.setGravity(Gravity.CENTER);e.setSingleLine(true);e.setBackgroundColor(PANEL);if(numeric)e.setInputType(InputType.TYPE_CLASS_NUMBER);return e;}
