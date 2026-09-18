@@ -7,5 +7,6 @@ Android app for Zebra TC26.
 - Case codes: `V######`
 - Package: `com.smproduce.veggie.shipping`
 - Build artifact: `SMProduce-Veggie-TC26.apk`
+- GitHub Actions build: enabled
 
 The app uses the existing Veggie web session and forwards TC26 hardware scans to the web UI.
