@@ -1,2 +1,2 @@
-build_outcome=skipped
-build_exit_code=
+build_outcome=success
+build_exit_code=0
