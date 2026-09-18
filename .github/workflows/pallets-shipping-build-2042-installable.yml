@@ -1,0 +1,39 @@
+name: Build TC26 2.0.42 Installable
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/tc26-modify-from-36
+    paths:
+      - 'tools/patch_tc26_installable_2042.py'
+      - '.github/workflows/pallets-shipping-build-2042-installable.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Apply installable 2.0.42 patch
+        run: python tools/patch_tc26_installable_2042.py
+      - name: Apply 2.0.42 server patch
+        run: python tools/patch_tc26_server_2042.py
+      - name: Build unsigned release APK
+        run: gradle -p pallets-shipping-android assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pallets-Shipping-TC26-2.0.42-INSTALLABLE-UNSIGNED
+          path: pallets-shipping-android/app/build/outputs/apk/release/app-release-unsigned.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TC26-2.0.42-INSTALLABLE-Server-Patch
+          path: |
+            webapp/api/pallets_shipping_app.php
+            webapp/api/tc26_modify_pallet.php

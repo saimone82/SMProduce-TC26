@@ -3,9 +3,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera.any" android:required="true"/>
-    <application android:theme="@style/AppTheme" android:label="Pallets / Shipping"
+    <application android:theme="@style/AppTheme" android:label="Pallet Shipping"
         android:icon="@drawable/app_icon" android:allowBackup="false" android:usesCleartextTraffic="false">
-        <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
+        <activity android:name=".ScannerActivity" android:screenOrientation="portrait" android:exported="false"/>
+        <activity android:name=".Tc26MainActivity" android:screenOrientation="portrait" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>

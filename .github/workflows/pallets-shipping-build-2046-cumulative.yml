@@ -1,0 +1,112 @@
+name: Build TC26 2.0.46 Cumulative
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/tc26-modify-from-36
+    paths:
+      - 'pallets-shipping-android/**'
+      - 'tools/patch_tc26_2046_cumulative.py'
+      - 'tools/patch_tc26_2046_complete_rules.py'
+      - 'tools/patch_tc26_2046_modify_base_api.py'
+      - '.github/workflows/pallets-shipping-build-2046-cumulative.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Apply TC26 cumulative patches only
+        run: |
+          python tools/patch_tc26_2046_cumulative.py
+          python tools/patch_tc26_2046_complete_rules.py
+          python tools/patch_tc26_2046_modify_base_api.py
+
+      - name: Verify TC26 cumulative source
+        run: |
+          MAIN='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/MainActivity.java'
+          TC26='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java'
+          SCAN='pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/ScannerActivity.java'
+          GRADLE='pallets-shipping-android/app/build.gradle'
+          MANIFEST='pallets-shipping-android/app/src/main/AndroidManifest.xml'
+          grep -F "applicationId 'com.smproduce.palletsshipping.tc26complete246'" "$GRADLE"
+          grep -F "versionName '2.0.46-tc26'" "$GRADLE"
+          grep -F 'Pallet Shipping' "$TC26"
+          grep -F 'ScannerIcon' "$TC26"
+          grep -F 'ModifyIcon' "$TC26"
+          grep -F 'LOOKUP MODE' "$TC26"
+          grep -F 'SAVE ONLY' "$TC26"
+          grep -F 'PRINT LABEL' "$TC26"
+          grep -F 'DELETE pallet' "$TC26"
+          grep -F 'SELECT ANOTHER PALLET' "$TC26"
+          grep -F 'PalletCompleteDialog.intercept' "$TC26"
+          grep -F 'pallet_edit_detail' "$TC26"
+          grep -F 'pallet_print_label' "$TC26"
+          grep -F 'CASE → PALLET' "$SCAN"
+          grep -F 'PALLET → CASES' "$SCAN"
+          grep -F 'scanner_case_lookup' "$SCAN"
+          grep -F 'scanner_pallet_lookup' "$SCAN"
+          grep -F 'Pallet already scanned in this shipment' "$MAIN"
+          grep -F 'palletCode.matches("P\\d+")' "$MAIN"
+          grep -F 'android:name=".ScannerActivity"' "$MANIFEST"
+          grep -F 'android:name=".Tc26MainActivity"' "$MANIFEST"
+          if grep -Fq 'Button editPallet=choice("Modify Existing Pallet"' "$MAIN"; then
+            echo 'Large Modify button regression found' >&2
+            exit 1
+          fi
+          if grep -Fq 'SM PRODUCE TC26' "$TC26"; then
+            echo 'Unwanted TC26 version badge found' >&2
+            exit 1
+          fi
+          if grep -Fq 'tablet.tools' "$GRADLE"; then
+            echo 'Tablet package regression found' >&2
+            exit 1
+          fi
+
+      - name: Build Android APK
+        run: gradle -p pallets-shipping-android assembleDebug
+
+      - name: Verify APK package signature launcher and cumulative features
+        run: |
+          set -e
+          APK='pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk'
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          AAPT=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          BADGING=$("$AAPT" dump badging "$APK")
+          echo "$BADGING" | head -40
+          echo "$BADGING" | grep "package: name='com.smproduce.palletsshipping.tc26complete246'"
+          echo "$BADGING" | grep "versionName='2.0.46-tc26'"
+          echo "$BADGING" | grep "application-label:'Pallet Shipping'"
+          echo "$BADGING" | grep "launchable-activity: name='com.smproduce.palletsshipping.Tc26MainActivity'"
+          unzip -t "$APK"
+          mkdir -p /tmp/tc26apk
+          unzip -q "$APK" 'classes*.dex' -d /tmp/tc26apk
+          cat /tmp/tc26apk/classes*.dex | strings > /tmp/tc26-strings.txt
+          grep -F 'Pallet Shipping' /tmp/tc26-strings.txt
+          grep -F 'LOOKUP MODE' /tmp/tc26-strings.txt
+          grep -F 'SAVE ONLY' /tmp/tc26-strings.txt
+          grep -F 'PRINT LABEL' /tmp/tc26-strings.txt
+          grep -F 'DELETE pallet' /tmp/tc26-strings.txt
+          grep -F 'SELECT ANOTHER PALLET' /tmp/tc26-strings.txt
+          grep -F 'scanner_pallet_lookup' /tmp/tc26-strings.txt
+          grep -F 'scanner_case_lookup' /tmp/tc26-strings.txt
+          grep -F 'pallet_complete_context' /tmp/tc26-strings.txt
+          if grep -Fq 'SM PRODUCE TC26' /tmp/tc26-strings.txt; then
+            echo 'Unwanted version badge found in APK' >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pallet-Shipping-TC26-2.0.46-CUMULATIVE
+          path: pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk

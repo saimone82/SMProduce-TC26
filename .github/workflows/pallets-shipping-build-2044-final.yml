@@ -1,0 +1,80 @@
+name: Build TC26 2.0.44 FINAL
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/tc26-modify-from-36
+    paths:
+      - 'tools/patch_tc26_2042.py'
+      - 'tools/patch_tc26_2044_final.py'
+      - 'tools/tc26_final_activity_2044.java.txt'
+      - 'tools/tc26_scanner_activity.b64'
+      - 'pallets-shipping-android/**'
+      - '.github/workflows/pallets-shipping-build-2044-final.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Apply cumulative 2.0.44 patches
+        run: |
+          python tools/patch_tc26_2042.py
+          python tools/patch_tc26_2044_final.py
+
+      - name: Verify required source features before build
+        run: |
+          grep -q 'Modify Existing Pallet' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/TC26FinalActivity.java
+          grep -q 'Scanner' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/TC26FinalActivity.java
+          grep -q 'EDIT_LOOKUP' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java
+          grep -q 'EDIT_ADD' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java
+          grep -q 'EDIT_REMOVE' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java
+          grep -q 'DELETE' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java
+          grep -q 'SAVE ONLY' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java
+          grep -q 'PRINT LABEL' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/Tc26MainActivity.java
+          grep -q 'Pallet already scanned in this shipment' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/MainActivity.java
+          grep -q 'scanner_case_lookup' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/ScannerActivity.java
+          grep -q 'scanner_pallet_lookup' pallets-shipping-android/app/src/main/java/com/smproduce/palletsshipping/ScannerActivity.java
+
+      - name: Build Android APK
+        run: gradle -p pallets-shipping-android assembleDebug
+
+      - name: Verify APK package signature launcher and contents
+        run: |
+          set -e
+          APK='pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk'
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          AAPT=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          BADGING=$("$AAPT" dump badging "$APK")
+          echo "$BADGING" | head -40
+          echo "$BADGING" | grep "package: name='com.smproduce.palletsshipping.tc26final244'"
+          echo "$BADGING" | grep "versionName='2.0.44-tc26-final'"
+          echo "$BADGING" | grep "application-label:'SM Produce TC26 2.0.44 FINAL'"
+          echo "$BADGING" | grep "launchable-activity: name='com.smproduce.palletsshipping.TC26FinalActivity'"
+          unzip -t "$APK"
+          mkdir -p /tmp/apkcheck
+          unzip -q "$APK" 'classes*.dex' -d /tmp/apkcheck
+          strings /tmp/apkcheck/classes*.dex > /tmp/dexstrings.txt
+          grep -Fq 'Modify Existing Pallet' /tmp/dexstrings.txt
+          grep -Fq 'Scanner password' /tmp/dexstrings.txt
+          grep -Fq 'LOOKUP MODE' /tmp/dexstrings.txt
+          grep -Fq 'SAVE ONLY' /tmp/dexstrings.txt
+          grep -Fq 'PRINT LABEL' /tmp/dexstrings.txt
+          grep -Fq 'Pallet already scanned in this shipment' /tmp/dexstrings.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pallets-Shipping-TC26-2.0.44-FINAL
+          path: pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk

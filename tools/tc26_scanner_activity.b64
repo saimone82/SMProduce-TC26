@@ -1,0 +1,307 @@
+package com.smproduce.palletsshipping;
+
+import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.graphics.Color;
+import android.os.Build;
+import android.os.Bundle;
+import android.text.InputType;
+import android.view.Gravity;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class ScannerActivity extends Activity {
+    enum Mode { CASE, PALLET }
+
+    private static final String SCAN_ACTION = "com.smproduce.TC26_COMPLETE_SCANNER.SCAN";
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final StringBuilder history = new StringBuilder();
+    private Mode mode = Mode.CASE;
+    private String password = "";
+    private boolean busy = false;
+    private boolean spanish = false;
+    private BroadcastReceiver receiver;
+    private TextView status;
+    private TextView historyView;
+    private EditText manual;
+    private Button caseButton;
+    private Button palletButton;
+
+    int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
+    String tr(String en, String es) { return spanish ? es : en; }
+
+    @Override public void onCreate(Bundle state) {
+        super.onCreate(state);
+        String p = getIntent().getStringExtra("scanner_password");
+        password = p == null ? "" : p.trim();
+        if (password.isEmpty()) { finish(); return; }
+        buildUi();
+        registerScanner();
+        configureDataWedge();
+    }
+
+    private Button button(String text, int color) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(Color.WHITE);
+        b.setBackgroundColor(color);
+        return b;
+    }
+
+    private TextView text(String value, int size, int color) {
+        TextView v = new TextView(this);
+        v.setText(value);
+        v.setTextSize(size);
+        v.setTextColor(color);
+        v.setPadding(0, dp(5), 0, dp(5));
+        return v;
+    }
+
+    private void buildUi() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(11,22,34));
+        root.setPadding(dp(14), dp(12), dp(14), dp(12));
+
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        Button back = button("‹", Color.rgb(52,65,85));
+        back.setTextSize(28);
+        back.setOnClickListener(v -> finish());
+        top.addView(back, new LinearLayout.LayoutParams(dp(58), dp(52)));
+        TextView title = text("Scanner", 24, Color.WHITE);
+        title.setTypeface(null, 1);
+        top.addView(title, new LinearLayout.LayoutParams(0, dp(52), 1));
+        Button lang = button(spanish ? "ES" : "EN", Color.rgb(25,118,210));
+        lang.setOnClickListener(v -> { spanish = !spanish; buildUi(); });
+        top.addView(lang, new LinearLayout.LayoutParams(dp(58), dp(52)));
+        root.addView(top);
+
+        LinearLayout modes = new LinearLayout(this);
+        modes.setPadding(0, dp(12), 0, dp(10));
+        caseButton = button(tr("CASE → PALLET", "CAJA → PALLET"), Color.rgb(25,118,210));
+        palletButton = button(tr("PALLET → CASES", "PALLET → CAJAS"), Color.rgb(52,65,85));
+        caseButton.setOnClickListener(v -> setMode(Mode.CASE));
+        palletButton.setOnClickListener(v -> setMode(Mode.PALLET));
+        modes.addView(caseButton, new LinearLayout.LayoutParams(0, dp(60), 1));
+        modes.addView(palletButton, new LinearLayout.LayoutParams(0, dp(60), 1));
+        root.addView(modes);
+
+        status = text(tr("Scan a case code", "Escanee un código de caja"), 17, Color.LTGRAY);
+        status.setGravity(Gravity.CENTER);
+        root.addView(status);
+
+        manual = new EditText(this);
+        manual.setTextColor(Color.WHITE);
+        manual.setHintTextColor(Color.GRAY);
+        manual.setSingleLine();
+        manual.setInputType(InputType.TYPE_CLASS_TEXT);
+        manual.setHint(tr("Scan or type code", "Escanee o escriba código"));
+        root.addView(manual, new LinearLayout.LayoutParams(-1, dp(58)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setPadding(0, dp(8), 0, dp(8));
+        Button search = button(tr("SEARCH", "BUSCAR"), Color.rgb(22,101,52));
+        Button clear = button(tr("CLEAR", "BORRAR"), Color.rgb(185,28,28));
+        search.setOnClickListener(v -> handleCode(manual.getText().toString()));
+        clear.setOnClickListener(v -> { history.setLength(0); updateHistory(); status.setText(tr("Cleared", "Borrado")); });
+        actions.addView(search, new LinearLayout.LayoutParams(0, dp(58), 1));
+        actions.addView(clear, new LinearLayout.LayoutParams(0, dp(58), 1));
+        root.addView(actions);
+
+        historyView = text("", 16, Color.WHITE);
+        historyView.setText(history.toString());
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(historyView, new ScrollView.LayoutParams(-1, -2));
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        setContentView(root);
+        applyModeColors();
+    }
+
+    private void setMode(Mode value) {
+        mode = value;
+        if (manual != null) manual.setText("");
+        applyModeColors();
+        if (status != null) status.setText(mode == Mode.CASE ? tr("Scan a case code", "Escanee un código de caja") : tr("Scan a pallet code", "Escanee un código de pallet"));
+    }
+
+    private void applyModeColors() {
+        if (caseButton == null || palletButton == null) return;
+        caseButton.setBackgroundColor(mode == Mode.CASE ? Color.rgb(25,118,210) : Color.rgb(52,65,85));
+        palletButton.setBackgroundColor(mode == Mode.PALLET ? Color.rgb(25,118,210) : Color.rgb(52,65,85));
+    }
+
+    private String normalize(String raw) {
+        String code = raw == null ? "" : raw.trim().toUpperCase(Locale.ROOT).replaceAll("[\\x00-\\x20\\x7F]+", "");
+        if (code.length() > 0 && code.length() % 2 == 0) {
+            String a = code.substring(0, code.length()/2);
+            String b = code.substring(code.length()/2);
+            if (a.equals(b)) code = a;
+        }
+        return code;
+    }
+
+    private void handleCode(String raw) {
+        if (busy) return;
+        final String code = normalize(raw);
+        if (code.isEmpty()) return;
+        if (mode == Mode.CASE && !code.matches("U\\d{7}")) { showError(tr("Invalid case code", "Código de caja inválido")); return; }
+        if (mode == Mode.PALLET && !code.matches("P\\d+")) { showError(tr("Invalid pallet code", "Código de pallet inválido")); return; }
+        manual.setText("");
+        status.setText(tr("Searching…", "Buscando…"));
+        busy = true;
+        io.execute(() -> {
+            try {
+                JSONObject j = request(mode == Mode.CASE ? "scanner_case_lookup" : "scanner_pallet_lookup", mode == Mode.CASE ? "case_serial" : "pallet_id", code);
+                runOnUiThread(() -> { busy = false; showResult(code, j); });
+            } catch (Exception e) {
+                runOnUiThread(() -> { busy = false; showError(tr("Connection error: ", "Error de conexión: ") + e.getMessage()); });
+            }
+        });
+    }
+
+    private void showResult(String code, JSONObject j) {
+        if (mode == Mode.CASE) {
+            String pallet = j.optString("pallet_id", "");
+            if (j.optInt("found", 0) != 1 || pallet.isEmpty()) {
+                append(code + "  →  " + tr("NOT ON A PALLET", "NO ESTÁ EN UN PALLET"));
+                status.setText(tr("Case not assigned", "Caja no asignada"));
+            } else {
+                append(code + "  →  " + pallet);
+                status.setText(code + "  →  " + pallet);
+            }
+            return;
+        }
+        if (j.optInt("found", 0) != 1) {
+            append(code + "  →  " + tr("PALLET NOT FOUND", "PALLET NO ENCONTRADO"));
+            status.setText(tr("Pallet not found", "Pallet no encontrado"));
+            return;
+        }
+        int count = j.optInt("case_count", 0);
+        StringBuilder block = new StringBuilder();
+        block.append(code).append(" · ").append(count).append(" ").append(tr("CASES", "CAJAS"));
+        JSONArray cases = j.optJSONArray("cases");
+        if (cases != null) for (int i = 0; i < cases.length(); i++) block.append("\n  • ").append(cases.optString(i));
+        append(block.toString());
+        status.setText(code + " · " + count + " " + tr("cases", "cajas"));
+    }
+
+    private void append(String s) {
+        if (history.length() > 0) history.append("\n\n");
+        history.append(s);
+        updateHistory();
+    }
+
+    private void updateHistory() { if (historyView != null) historyView.setText(history.toString()); }
+
+    private void showError(String msg) {
+        if (status != null) { status.setText(msg); status.setTextColor(Color.rgb(248,113,113)); }
+        Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+    }
+
+    private JSONObject request(String action, String field, String code) throws Exception {
+        String body = "action=" + URLEncoder.encode(action, "UTF-8") +
+                "&" + field + "=" + URLEncoder.encode(code, "UTF-8") +
+                "&password=" + URLEncoder.encode(password, "UTF-8") +
+                "&app_version=2.0.43-tc26";
+        HttpURLConnection c = (HttpURLConnection) new URL(BuildConfig.API_URL).openConnection();
+        c.setConnectTimeout(6000); c.setReadTimeout(12000); c.setRequestMethod("POST"); c.setDoOutput(true);
+        c.setRequestProperty("X-App-Token", BuildConfig.APP_TOKEN);
+        c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+        try (OutputStream out = c.getOutputStream()) { out.write(body.getBytes(StandardCharsets.UTF_8)); }
+        InputStream in = c.getResponseCode() < 400 ? c.getInputStream() : c.getErrorStream();
+        if (in == null) throw new IllegalStateException("Empty server response");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096]; int n;
+        while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+        JSONObject j = new JSONObject(out.toString("UTF-8"));
+        if (j.optInt("ok", 0) != 1) throw new IllegalStateException(j.optString("err", "API error"));
+        return j;
+    }
+
+    private void registerScanner() {
+        receiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                String value = intent.getStringExtra("com.symbol.datawedge.data_string");
+                if (value == null) value = intent.getStringExtra("com.motorolasolutions.emdk.datawedge.data_string");
+                handleCode(value);
+            }
+        };
+        IntentFilter filter = new IntentFilter(SCAN_ACTION);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+        else registerReceiver(receiver, filter);
+    }
+
+    private void configureDataWedge() {
+        Bundle app = new Bundle();
+        app.putString("PACKAGE_NAME", getPackageName());
+        app.putStringArray("ACTIVITY_LIST", new String[]{getClass().getName()});
+
+        Bundle barcodeParams = new Bundle();
+        barcodeParams.putString("scanner_input_enabled", "true");
+        barcodeParams.putString("scanner_selection", "auto");
+        Bundle barcode = new Bundle();
+        barcode.putString("PLUGIN_NAME", "BARCODE");
+        barcode.putString("RESET_CONFIG", "false");
+        barcode.putBundle("PARAM_LIST", barcodeParams);
+
+        Bundle intentParams = new Bundle();
+        intentParams.putString("intent_output_enabled", "true");
+        intentParams.putString("intent_action", SCAN_ACTION);
+        intentParams.putString("intent_delivery", "2");
+        Bundle intentPlugin = new Bundle();
+        intentPlugin.putString("PLUGIN_NAME", "INTENT");
+        intentPlugin.putString("RESET_CONFIG", "false");
+        intentPlugin.putBundle("PARAM_LIST", intentParams);
+
+        Bundle keyParams = new Bundle();
+        keyParams.putString("keystroke_output_enabled", "false");
+        Bundle keyPlugin = new Bundle();
+        keyPlugin.putString("PLUGIN_NAME", "KEYSTROKE");
+        keyPlugin.putString("RESET_CONFIG", "false");
+        keyPlugin.putBundle("PARAM_LIST", keyParams);
+
+        for (Bundle plugin : new Bundle[]{barcode, intentPlugin, keyPlugin}) {
+            Bundle cfg = new Bundle();
+            cfg.putString("PROFILE_NAME", "SMProduce_TC26_Complete_Scanner");
+            cfg.putString("PROFILE_ENABLED", "true");
+            cfg.putString("CONFIG_MODE", "CREATE_IF_NOT_EXIST");
+            cfg.putParcelableArray("APP_LIST", new Bundle[]{app});
+            cfg.putBundle("PLUGIN_CONFIG", plugin);
+            sendBroadcast(new Intent("com.symbol.datawedge.api.ACTION").putExtra("com.symbol.datawedge.api.SET_CONFIG", cfg));
+            cfg.putString("CONFIG_MODE", "UPDATE");
+            sendBroadcast(new Intent("com.symbol.datawedge.api.ACTION").putExtra("com.symbol.datawedge.api.SET_CONFIG", cfg));
+        }
+    }
+
+    @Override protected void onResume() { super.onResume(); configureDataWedge(); }
+
+    @Override protected void onDestroy() {
+        try { if (receiver != null) unregisterReceiver(receiver); } catch (Exception ignored) {}
+        password = "";
+        io.shutdownNow();
+        super.onDestroy();
+    }
+}
