@@ -7,6 +7,11 @@ on:
     paths:
       - 'veggie-tc26-app/**'
       - '.github/workflows/build-veggie-tc26-apk.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'veggie-tc26-app/**'
+      - '.github/workflows/build-veggie-tc26-apk.yml'
 
 jobs:
   build:
