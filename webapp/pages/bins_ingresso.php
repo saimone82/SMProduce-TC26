@@ -428,9 +428,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $lot        = trim($_POST['lot']      ?? '');
         $notes      = trim($_POST['notes']    ?? '');
         $qty        = max(1, intval($_POST['quantity'] ?? 1));
-        // API Save Only: all DB/receipt/PDF logic remains identical, only physical printing is skipped.
-        // Normal webpage behavior is unchanged because skip_print is absent there.
-        $skipPrint  = ((string)($_POST['skip_print'] ?? '') === '1');
+        // API clients can choose labels, report, or both. Legacy/web requests still
+        // print both because these flags are absent by default.
+        $skipAllPrint    = ((string)($_POST['skip_print'] ?? '') === '1');
+        $skipLabelPrint  = $skipAllPrint || ((string)($_POST['skip_label_print'] ?? '') === '1');
+        $skipReportPrint = $skipAllPrint || ((string)($_POST['skip_report_print'] ?? '') === '1');
+        $printMode       = trim((string)($_POST['print_mode'] ?? 'report_labels'));
         $settingsNow=fbr_get_settings($mysqli);
         $printer_id=(int)($settingsNow['label_printer_id'] ?? 0);
         $template_id=(int)($settingsNow['label_template_id'] ?? 0);
@@ -535,7 +538,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 // Print only AFTER the full batch exists and has its definitive x-of-y values.
-                if (!$skipPrint && $printer_id > 0) {
+                if (!$skipLabelPrint && $printer_id > 0) {
                     foreach ($newBinIds as $batchBinId) {
                         if (printBinLabel($mysqli,(int)$batchBinId,$printer_id,$template_id)) $printed++;
                         else $printFailed++;
@@ -561,8 +564,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $reportPrinter=trim((string)$settingsNow['report_printer']);
                 $reportPrint=['ok'=>false,'skipped'=>true,'error'=>'No Full Bin report printer selected.'];
-                if($skipPrint){
-                    $reportPrint=['ok'=>false,'skipped'=>true,'error'=>'Printing skipped: Save Only selected.'];
+                if($skipReportPrint){
+                    $reportPrint=['ok'=>false,'skipped'=>true,'error'=>'Report printing was not selected.'];
                 } elseif(!empty($fullReport['ok'])&&$reportPrinter!==''){
                     try{$reportPrint=ebr_print_pdf_windows((string)$fullReport['path'],$reportPrinter);}
                     catch(Throwable $ex){$reportPrint=['ok'=>false,'error'=>$ex->getMessage()];}
@@ -574,11 +577,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($insertFailed > 0) {
                     $msg .= " Insert failed: $insertFailed.";
                 }
-                if ($skipPrint) {
-                    $msg .= " Saved without printing.";
-                } elseif ($printer_id > 0) {
+                if (!$skipLabelPrint && $printer_id > 0) {
                     $msg .= " Printed: $printed";
                     if ($printFailed > 0) $msg .= " (print failed: $printFailed)";
+                }
+                if (!$skipReportPrint && empty($reportPrint['ok'])) {
+                    $msg .= " Report print failed.";
                 }
                 /* ── AJAX early exit ── */
                 if (!empty($_SERVER['HTTP_X_REQUESTED_WITH'])) {
@@ -603,6 +607,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'insertFailed' => $insertFailed,
                         'printed'      => $printed,
                         'printFailed'  => $printFailed,
+                        'printMode'    => $printMode,
                         'receipt' => [
                             'id'=>$receiptId,'created_at'=>date('Y-m-d H:i:s'),'grower'=>$grower,'variety'=>$variety,
                             'type'=>$type,'lot'=>$lot,'notes'=>$notes,'date'=>$date,'qty'=>$qty,'report_url'=>$fullReport['url']??null,
