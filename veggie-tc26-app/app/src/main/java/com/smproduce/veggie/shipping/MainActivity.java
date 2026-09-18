@@ -21,7 +21,7 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 public class MainActivity extends Activity {
-    private static final String APP_URL = "https://smproduceprod.uk/cherry/veggie/tc26_shipping.php";
+    private static final String APP_URL = "https://smproduceprod.uk/cherry/veggie/tc26_app_entry.php?token=SMVG_2026_7515ec5f5bce38ddbae2a532f303d0df";
     private static final String DW_ACTION = "com.smproduce.VEGGIE_TC26.SCAN";
     private WebView webView;
     private ProgressBar progress;
