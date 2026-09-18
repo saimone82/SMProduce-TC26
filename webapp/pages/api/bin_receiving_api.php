@@ -1,5 +1,5 @@
 <?php
-// SM Produce Bins Receiving API v1.1.7
+// SM Produce Bins Receiving API v1.2.0
 header('Content-Type: application/json; charset=utf-8');
 
 $TOKEN = 'SMTC26_SECURE_2026';
@@ -161,8 +161,22 @@ if ($action === 'presets') {
 
 $_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
 $_SERVER['REQUEST_METHOD'] = 'POST';
-$wantPrint = ((string)($_POST['print'] ?? '1') !== '0');
-$_POST['skip_print'] = $wantPrint ? '0' : '1';
+$printMode = trim((string)($_POST['print_mode'] ?? ''));
+if ($printMode === '') {
+    // Backward compatibility with APK versions that only sent print=0/1.
+    $printMode = ((string)($_POST['print'] ?? '1') !== '0') ? 'report_labels' : 'none';
+}
+if (!in_array($printMode, ['labels', 'report_labels', 'report', 'none'], true)) {
+    http_response_code(400);
+    echo json_encode(['ok'=>false,'error'=>'Invalid print mode']);
+    exit;
+}
+$printLabels = in_array($printMode, ['labels', 'report_labels'], true);
+$printReport = in_array($printMode, ['report', 'report_labels'], true);
+$_POST['print_mode'] = $printMode;
+$_POST['skip_label_print'] = $printLabels ? '0' : '1';
+$_POST['skip_report_print'] = $printReport ? '0' : '1';
+$_POST['skip_print'] = ($printLabels || $printReport) ? '0' : '1';
 
 if ($action === 'save_empty') {
     $_POST['save_empty'] = '1';
