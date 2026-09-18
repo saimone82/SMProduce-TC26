@@ -1,5 +1,8 @@
 name: Build Veggie TC26 APK
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   push:
@@ -43,6 +46,16 @@ jobs:
         run: |
           mkdir -p dist
           cp veggie-tc26-app/app/build/outputs/apk/debug/app-debug.apk dist/SMProduce-Veggie-TC26.apk
+
+      - name: Commit built APK back to repo
+        run: |
+          mkdir -p built
+          cp dist/SMProduce-Veggie-TC26.apk built/SMProduce-Veggie-TC26.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add built/SMProduce-Veggie-TC26.apk
+          git commit -m "Update built Veggie TC26 APK [skip ci]" || true
+          git push
 
       - uses: actions/upload-artifact@v4
         with:
