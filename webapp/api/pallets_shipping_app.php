@@ -160,34 +160,44 @@ try {
         $serial = ps_normalize_scan_code((string)($input['case_serial'] ?? ''));
         $caseRow = ps_direct_casecode_lookup($dbx, $serial);
         if (!$caseRow) ps_out(['ok'=>0, 'err'=>'Case '.$serial.' not found in casecodes', 'scanned_code'=>$serial]);
-        if (ps_case_on_pallet($dbx,$pid,$serial))
-            ps_out(['ok'=>0,'err'=>'Case already scanned on this pallet','scanned_code'=>$serial]);
-        $existing = smp_db_fetch_one($dbx,
-            "SELECT pallet_id FROM pallet_cases WHERE case_serial=? LIMIT 1", [$serial]);
-        // Idempotent scan: Zebra/DataWedge can occasionally deliver the same
-        // barcode twice. A repeat on the current pallet is a successful no-op.
-        if ($existing && (string)$existing['pallet_id'] === $pid) {
-            $detail = ps_pallet_detail($dbx, $pid);
-            $detail['duplicate_ignored'] = 1;
-            ps_out($detail);
-        }
-        if ($existing) ps_out(['ok'=>0, 'err'=>'Case '.$serial.' already belongs to pallet '.$existing['pallet_id']]);
-        $res = smp_tc26_add_case_to_pallet($dbx, $pid, $serial, [
-            'user_id'=>$uid,
-            'sku'=>(string)($caseRow['SKU']??$caseRow['sku']??''),
-            'variety'=>(string)($caseRow['variety']??$caseRow['Variety']??''),
-            'grower'=>(string)($caseRow['grower']??$caseRow['Grower']??''),
-            'size'=>(string)($caseRow['size']??$caseRow['Size']??''),
-            'packaging'=>(string)($caseRow['packaging']??$caseRow['Packaging']??''),
-            'crop'=>(string)($caseRow['crop']??$caseRow['Crop']??''),
-            'lot'=>(string)($caseRow['lot']??$caseRow['Lot']??''),
-            'pack_date'=>(string)($caseRow['pack_date']??$caseRow['PackDate']??''),
-        ]);
-        if (empty($res['ok'])) {
-            $res['scanned_code']=$serial;
-            ps_out($res);
-        }
-        ps_out(ps_pallet_detail($dbx, $pid));
+
+        // The lock covers both the duplicate check and the insert. Two Zebra
+        // triggers for the same case can therefore never put it on two pallets.
+        $out = tc26_collab_critical($dbx, 'case:'.$serial,
+            function() use ($dbx, $pid, $serial, $caseRow, $uid): array {
+                if (ps_case_on_pallet($dbx, $pid, $serial)) {
+                    return ['ok'=>0,'err'=>'Case already scanned on this pallet','scanned_code'=>$serial];
+                }
+                $existing = smp_db_fetch_one($dbx,
+                    "SELECT pallet_id FROM pallet_cases WHERE case_serial=? LIMIT 1", [$serial]);
+                if ($existing && (string)$existing['pallet_id'] === $pid) {
+                    $detail = ps_pallet_detail($dbx, $pid);
+                    $detail['duplicate_ignored'] = 1;
+                    return $detail;
+                }
+                if ($existing) {
+                    return ['ok'=>0,
+                        'err'=>'Case '.$serial.' already belongs to pallet '.$existing['pallet_id'],
+                        'scanned_code'=>$serial];
+                }
+                $res = smp_tc26_add_case_to_pallet($dbx, $pid, $serial, [
+                    'user_id'=>$uid,
+                    'sku'=>(string)($caseRow['SKU']??$caseRow['sku']??''),
+                    'variety'=>(string)($caseRow['variety']??$caseRow['Variety']??''),
+                    'grower'=>(string)($caseRow['grower']??$caseRow['Grower']??''),
+                    'size'=>(string)($caseRow['size']??$caseRow['Size']??''),
+                    'packaging'=>(string)($caseRow['packaging']??$caseRow['Packaging']??''),
+                    'crop'=>(string)($caseRow['crop']??$caseRow['Crop']??''),
+                    'lot'=>(string)($caseRow['lot']??$caseRow['Lot']??''),
+                    'pack_date'=>(string)($caseRow['pack_date']??$caseRow['PackDate']??''),
+                ]);
+                if (empty($res['ok'])) {
+                    $res['scanned_code'] = $serial;
+                    return $res;
+                }
+                return ps_pallet_detail($dbx, $pid);
+            });
+        ps_out($out);
     }
     if ($action === 'pallet_remove_last') {
         $pid = ps_normalize_scan_code((string)($input['pallet_id'] ?? ''));
@@ -252,16 +262,24 @@ try {
     if ($action === 'shipment_scan_pallet') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
         $pid = ps_normalize_scan_code((string)($input['pallet_id'] ?? ''));
-        $existing = smp_db_fetch_one($dbx,
-            "SELECT id FROM shipment_pallets WHERE shipment_id=? AND pallet_id=? LIMIT 1", [$sid,$pid]);
-        if ($existing) {
-            $detail = ps_shipment_detail($dbx, $sid);
-            $detail['duplicate_ignored'] = 1;
-            ps_out(tc26_collab_add_status($dbx, $detail, $sid, $deviceId));
-        }
-        $res = smp_tc26_add_pallet_to_shipment($dbx, $sid, $pid, $uid);
-        if (empty($res['ok'])) ps_out($res);
-        ps_out(tc26_collab_add_status($dbx, ps_shipment_detail($dbx, $sid), $sid, $deviceId));
+
+        // A shipment lock makes the duplicate test and add operation atomic
+        // while every Zebra remains free to work on the same open shipment.
+        $out = tc26_collab_critical($dbx, 'shipment:'.$sid,
+            function() use ($dbx, $sid, $pid, $uid): array {
+                $existing = smp_db_fetch_one($dbx,
+                    "SELECT id FROM shipment_pallets WHERE shipment_id=? AND pallet_id=? LIMIT 1",
+                    [$sid,$pid]);
+                if ($existing) {
+                    $detail = ps_shipment_detail($dbx, $sid);
+                    $detail['duplicate_ignored'] = 1;
+                    return $detail;
+                }
+                $res = smp_tc26_add_pallet_to_shipment($dbx, $sid, $pid, $uid);
+                if (empty($res['ok'])) return $res;
+                return ps_shipment_detail($dbx, $sid);
+            });
+        ps_out(tc26_collab_add_status($dbx, $out, $sid, $deviceId));
     }
     if ($action === 'shipment_remove_last') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
