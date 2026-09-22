@@ -36,6 +36,28 @@ function tc26_collab_device_id(array $input): string {
     return preg_match('/^[A-Za-z0-9._:-]{8,160}$/', $id) ? $id : '';
 }
 
+/**
+ * A browser session is a first-class shipment client too.  It receives a
+ * private random identity so web actions use the exact same owner gate as a
+ * Zebra and cannot bypass label/close controls.
+ */
+function tc26_collab_web_device_id(): string {
+    if (session_status() === PHP_SESSION_NONE) session_start();
+    if (empty($_SESSION['tc26_collab_web_device_id'])) {
+        $_SESSION['tc26_collab_web_device_id'] = 'web-' . bin2hex(random_bytes(20));
+    }
+    return (string)$_SESSION['tc26_collab_web_device_id'];
+}
+
+/** Claim or refresh the one allowed shipment owner atomically. */
+function tc26_collab_enter_shipment($db, string $shipmentId, string $deviceId): array {
+    if ($shipmentId === '') return ['ok'=>0,'err'=>'Missing shipment_id'];
+    return tc26_collab_critical($db, 'shipment:'.$shipmentId,
+        function() use ($db, $shipmentId, $deviceId): array {
+            return tc26_collab_claim_shipment($db, $shipmentId, $deviceId);
+        });
+}
+
 function tc26_collab_setup($db): void {
     static $ready = false;
     if ($ready) return;
@@ -145,7 +167,8 @@ function tc26_collab_assert_available($db, string $shipmentId, string $deviceId)
     if ($lock && !hash_equals((string)$lock['device_id'], $deviceId)) {
         return [
             'ok'=>0,
-            'err'=>'Shipment is currently taken over by another Zebra. Palletizing remains available.',
+            'err'=>'This shipment is already open by another device. Press Take Over and enter password 2424.',
+            'shipment_in_use'=>1,
             'shipment_taken_over'=>1,
         ];
     }
@@ -186,17 +209,13 @@ function tc26_collab_takeover($db, array $cfg, string $shipmentId, string $devic
 function tc26_collab_add_status($db, array $status, string $shipmentId, string $deviceId): array {
     if (empty($status['ok']) || $shipmentId === '' || $deviceId === '') return $status;
     tc26_collab_touch($db, $shipmentId, $deviceId);
-    $others = tc26_collab_active_others($db, $shipmentId, $deviceId);
     $lock = tc26_collab_lock($db, $shipmentId);
-    $status['active_other_zebras'] = $others;
-    if ($others > 0) {
-        $status['collaboration_notice'] =
-            'Another Zebra is already working on this shipment. You can continue; pallets remain separate.';
-    }
+    $status['active_other_zebras'] = 0;
     if ($lock && !hash_equals((string)$lock['device_id'], $deviceId)) {
+        $status['shipment_in_use'] = 1;
         $status['shipment_taken_over'] = 1;
         $status['collaboration_notice'] =
-            'Another Zebra has taken over shipment operations. Palletizing remains available.';
+            'Shipment already open on another device. Take Over requires password 2424.';
     }
     return $status;
 }
