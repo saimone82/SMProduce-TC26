@@ -97,6 +97,41 @@ function tc26_collab_lock($db, string $shipmentId): ?array {
     return is_array($row) ? $row : null;
 }
 
+/**
+ * A shipment belongs to one Zebra at a time.  The takeovers table is the
+ * durable ownership record; an inactive owner automatically expires after
+ * eight hours in tc26_collab_lock().
+ */
+function tc26_collab_claim_shipment($db, string $shipmentId, string $deviceId): array {
+    if ($shipmentId === '' || $deviceId === '') {
+        return ['ok'=>0,'err'=>'Update this Zebra to the Multi-Zebra version before opening a shipment.'];
+    }
+    $owner = tc26_collab_lock($db, $shipmentId);
+    if ($owner && !hash_equals((string)$owner['device_id'], $deviceId)) {
+        return [
+            'ok'=>0,
+            'err'=>'This shipment is already open on another Zebra. Press Take Over and enter password 2424.',
+            'shipment_in_use'=>1,
+        ];
+    }
+    tc26_collab_setup($db);
+    if (!$owner) {
+        smp_db_exec($db,
+            "INSERT INTO tc26_shipment_takeovers (shipment_id,device_id,taken_at,updated_at)
+             VALUES (?,?,NOW(),NOW())",
+            [$shipmentId, $deviceId]
+        );
+    } else {
+        smp_db_exec($db,
+            "UPDATE tc26_shipment_takeovers SET updated_at=NOW()
+              WHERE shipment_id=? AND device_id=?",
+            [$shipmentId, $deviceId]
+        );
+    }
+    tc26_collab_touch($db, $shipmentId, $deviceId);
+    return ['ok'=>1];
+}
+
 function tc26_collab_mutation(string $action): bool {
     return in_array($action, [
         'shipment_set_order', 'shipment_scan_pallet',
@@ -128,16 +163,11 @@ function tc26_collab_takeover($db, array $cfg, string $shipmentId, string $devic
     if ($shipmentId === '' || $deviceId === '') {
         return ['ok'=>0,'err'=>'This version of the app is required for Shipment Take Over.'];
     }
-    $expected = strtolower(trim((string)(
-        $cfg['shipment_takeover_password_sha256']
-        ?? $cfg['skip_po_password_sha256']
-        ?? ''
-    )));
-    if ($expected === '' || !hash_equals($expected, hash('sha256', $password))) {
+    if (!hash_equals('2424', trim($password))) {
         return ['ok'=>0,'err'=>'Incorrect Shipment Take Over password'];
     }
-    // Same advisory lock as shipment scans: no in-flight shipment operation
-    // can slip through while the takeover is being recorded.
+    // Same advisory lock as shipment scans: ownership changes and shipment
+    // mutations can never pass each other at the same instant.
     return tc26_collab_critical($db, 'shipment:'.$shipmentId,
         function() use ($db, $shipmentId, $deviceId): array {
             tc26_collab_setup($db);
@@ -149,7 +179,7 @@ function tc26_collab_takeover($db, array $cfg, string $shipmentId, string $devic
             );
             tc26_collab_touch($db, $shipmentId, $deviceId);
             return ['ok'=>1,'shipment_taken_over'=>1,
-                    'msg'=>'Shipment taken over on this Zebra. Other Zebras can continue palletizing.'];
+                    'msg'=>'Shipment taken over on this Zebra. Palletizing on every Zebra remains available.'];
         });
 }
 
