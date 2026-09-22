@@ -6,6 +6,8 @@ on:
     paths:
       - 'webapp/api/pallets_shipping_app.php'
       - 'webapp/api/tc26_shipment_collaboration.php'
+      - 'webapp/pages/api/tc26_shipping_api.php'
+      - 'webapp/pages/pallets_manage.php'
       - '.github/workflows/verify-tc26-multi-zebra.yml'
 permissions:
   contents: read
@@ -16,3 +18,5 @@ jobs:
       - uses: actions/checkout@v4
       - run: php -l webapp/api/tc26_shipment_collaboration.php
       - run: php -l webapp/api/pallets_shipping_app.php
+      - run: php -l webapp/pages/api/tc26_shipping_api.php
+      - run: php -l webapp/pages/pallets_manage.php
