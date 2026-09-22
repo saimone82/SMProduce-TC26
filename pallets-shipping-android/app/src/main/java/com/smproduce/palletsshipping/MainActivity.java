@@ -399,7 +399,7 @@ public class MainActivity extends Activity {
         if(!online){error(tr("Connect before saving the shipment for another Zebra","Conéctese antes de guardar el envío para otro Zebra"));return;}
         if(shipmentId.isEmpty()){error(tr("No shipment is open","No hay un envío abierto"));return;}
         if(queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before saving","Espere la sincronización antes de guardar"));return;}
-        call(map("action","shipment_save","shipment_id",shipmentId),j->{
+        call(map("action","shipment_resume","shipment_id",shipmentId),j->{
             palletCount=j.optInt("pallet_count",palletCount);shipmentCases=j.optInt("cases_count",shipmentCases);
             done(tr("Shipment saved on the server — it can be reopened from any Zebra","Envío guardado en el servidor — puede reabrirse desde cualquier Zebra"));
         });
