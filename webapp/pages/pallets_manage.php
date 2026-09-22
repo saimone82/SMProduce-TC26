@@ -10,6 +10,7 @@ if (!isset($_SESSION['user']) && empty($_SESSION['logged_in'])) {
 require_once __DIR__.'/../includes/db.php';
 require_once __DIR__.'/../includes/print_engine.php';
 require_once __DIR__.'/../includes/pallet_report.php';
+require_once __DIR__.'/../api/tc26_shipment_collaboration.php';
 
 $dbx = $conn; // Pallets Manage uses mysqli consistently (ppr_* helpers are mysqli-based)
 smp_ensure_tc26_tables($dbx);
@@ -29,6 +30,32 @@ if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || !empty($_POST['ajax'])) {
     try { $dbx->query("SET SESSION sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''))"); } catch(Throwable $e) {}
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? $_GET['action'] ?? '';
+
+    /*
+     * A pallet can be edited or printed freely while it is not assigned to a
+     * live shipment.  Once assigned, all write/print paths must pass the same
+     * exclusive shipment-owner check used by the Zebra app.
+     */
+    $pmShipmentOwnerGate = function(string $pid) use ($dbx): array {
+        if ($pid === '') return ['ok'=>0,'err'=>'Missing pallet_id'];
+        try {
+            $row = smp_db_fetch_one($dbx,
+                "SELECT shipment_id FROM shipment_pallets
+                  WHERE pallet_id=? ORDER BY id DESC LIMIT 1", [$pid]);
+        } catch (Throwable $e) { $row = null; }
+        $sid = trim((string)($row['shipment_id'] ?? ''));
+        if ($sid === '') return ['ok'=>1];
+        return tc26_collab_enter_shipment($dbx, $sid, tc26_collab_web_device_id());
+    };
+    $pmProtectedActions = ['reopen','mark_partial','delete','remove_case','reprint','print_report'];
+    if (in_array($action, $pmProtectedActions, true)) {
+        $pmGate = $pmShipmentOwnerGate(trim((string)($_POST['pallet_id'] ?? '')));
+        if (empty($pmGate['ok'])) {
+            http_response_code(409);
+            echo json_encode($pmGate);
+            exit;
+        }
+    }
 
     $editPassword = (string)($_POST['admin_password'] ?? '');
     $requireClosedPassword = function(string $pid) use ($dbx,$editPassword): bool {
