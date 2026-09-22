@@ -56,6 +56,28 @@ public class Recovery52MultiActivity extends Recovery36Activity {
         });
     }
 
+    @Override JSONObject requestUrl(String url, Map<String,String> request) throws Exception {
+        JSONObject response = super.requestUrl(url, request);
+        if ("shipment_resume".equals(request.get("action"))
+                && response.optInt("shipment_in_use") == 1) {
+            final String shipmentId = request.get("shipment_id");
+            runOnUiThread(() -> showShipmentInUse(shipmentId));
+        }
+        return response;
+    }
+
+    private void showShipmentInUse(String shipmentId) {
+        if (shipmentId == null || shipmentId.trim().isEmpty() || noticeVisible) return;
+        noticeVisible = true;
+        new AlertDialog.Builder(this)
+                .setTitle("Shipment already open")
+                .setMessage("Another Zebra is using this shipment. It cannot be opened here unless you choose Take Over and enter the password.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("TAKE OVER", (dialog, which) -> requestTakeOver(shipmentId))
+                .setOnDismissListener(dialog -> noticeVisible = false)
+                .show();
+    }
+
     private void showCollaborationNotice(JSONObject json, String shipmentId) {
         final String notice = json.optString("collaboration_notice", "").trim();
         if (notice.isEmpty() || noticeVisible || notice.equals(lastNotice)) return;
