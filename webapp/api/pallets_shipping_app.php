@@ -118,16 +118,6 @@ try {
             (string)($input['takeover_password'] ?? '')));
     }
 
-    // Take Over protects shipment operations only. Pallet creation, scans and
-    // pallet closing deliberately remain available on every Zebra.
-    if (tc26_collab_mutation($action)) {
-        $sid = trim((string)($input['shipment_id'] ?? ''));
-        if ($blocked = tc26_collab_assert_available($dbx, $sid, $deviceId)) {
-            ps_out($blocked);
-        }
-        tc26_collab_touch($dbx, $sid, $deviceId);
-    }
-
     if ($action === 'ping') ps_out(['ok'=>1, 'api_version'=>'1.4.2', 'server_time'=>date(DATE_ATOM)]);
 
     if ($action === 'case_check') {
@@ -238,11 +228,16 @@ try {
     }
     if ($action === 'shipment_set_order') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        smp_db_exec($dbx,
-            "UPDATE shipments SET po=?,customer_name=?,order_id=?,ship_date=? WHERE shipment_id=?",
-            [trim((string)($input['po']??'')), trim((string)($input['customer_name']??'')),
-             (int)($input['order_id']??0) ?: null, date('Y-m-d'), $sid]);
-        ps_out(tc26_collab_add_status($dbx, ps_shipment_detail($dbx, $sid), $sid, $deviceId));
+        $out = tc26_collab_critical($dbx, 'shipment:'.$sid,
+            function() use ($dbx, $sid, $deviceId, $input): array {
+                if ($blocked = tc26_collab_assert_available($dbx, $sid, $deviceId)) return $blocked;
+                smp_db_exec($dbx,
+                    "UPDATE shipments SET po=?,customer_name=?,order_id=?,ship_date=? WHERE shipment_id=?",
+                    [trim((string)($input['po']??'')), trim((string)($input['customer_name']??'')),
+                     (int)($input['order_id']??0) ?: null, date('Y-m-d'), $sid]);
+                return ps_shipment_detail($dbx, $sid);
+            });
+        ps_out(tc26_collab_add_status($dbx, $out, $sid, $deviceId));
     }
     if ($action === 'verify_skip_po_password') {
         $password = (string)($input['password'] ?? '');
@@ -266,7 +261,8 @@ try {
         // A shipment lock makes the duplicate test and add operation atomic
         // while every Zebra remains free to work on the same open shipment.
         $out = tc26_collab_critical($dbx, 'shipment:'.$sid,
-            function() use ($dbx, $sid, $pid, $uid): array {
+            function() use ($dbx, $sid, $pid, $uid, $deviceId): array {
+                if ($blocked = tc26_collab_assert_available($dbx, $sid, $deviceId)) return $blocked;
                 $existing = smp_db_fetch_one($dbx,
                     "SELECT id FROM shipment_pallets WHERE shipment_id=? AND pallet_id=? LIMIT 1",
                     [$sid,$pid]);
@@ -283,22 +279,32 @@ try {
     }
     if ($action === 'shipment_remove_last') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        $row = smp_db_fetch_one($dbx, "SELECT id FROM shipment_pallets WHERE shipment_id=? ORDER BY id DESC LIMIT 1", [$sid]);
-        if (!$row) ps_out(['ok'=>0, 'err'=>'No pallets to remove']);
-        $res = smp_tc26_remove_pallet_from_shipment($dbx, (int)$row['id'], $sid);
-        if (empty($res['ok'])) ps_out($res);
-        ps_out(tc26_collab_add_status($dbx, ps_shipment_detail($dbx, $sid), $sid, $deviceId));
+        $out = tc26_collab_critical($dbx, 'shipment:'.$sid,
+            function() use ($dbx, $sid, $deviceId): array {
+                if ($blocked = tc26_collab_assert_available($dbx, $sid, $deviceId)) return $blocked;
+                $row = smp_db_fetch_one($dbx,
+                    "SELECT id FROM shipment_pallets WHERE shipment_id=? ORDER BY id DESC LIMIT 1", [$sid]);
+                if (!$row) return ['ok'=>0, 'err'=>'No pallets to remove'];
+                $res = smp_tc26_remove_pallet_from_shipment($dbx, (int)$row['id'], $sid);
+                return empty($res['ok']) ? $res : ps_shipment_detail($dbx, $sid);
+            });
+        ps_out(tc26_collab_add_status($dbx, $out, $sid, $deviceId));
     }
     if ($action === 'shipment_close') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        $res = smp_tc26_close_shipment($dbx, $sid, $uid, 0);
-        if (!empty($res['ok']) && $deviceId !== '') {
-            tc26_collab_setup($dbx);
-            smp_db_exec($dbx,
-                "DELETE FROM tc26_shipment_takeovers WHERE shipment_id=? AND device_id=?",
-                [$sid, $deviceId]);
-        }
-        ps_out($res);
+        $out = tc26_collab_critical($dbx, 'shipment:'.$sid,
+            function() use ($dbx, $sid, $uid, $deviceId): array {
+                if ($blocked = tc26_collab_assert_available($dbx, $sid, $deviceId)) return $blocked;
+                $res = smp_tc26_close_shipment($dbx, $sid, $uid, 0);
+                if (!empty($res['ok']) && $deviceId !== '') {
+                    tc26_collab_setup($dbx);
+                    smp_db_exec($dbx,
+                        "DELETE FROM tc26_shipment_takeovers WHERE shipment_id=? AND device_id=?",
+                        [$sid, $deviceId]);
+                }
+                return $res;
+            });
+        ps_out($out);
     }
 
     ps_out(['ok'=>0, 'err'=>'Unknown action'], 400);
