@@ -162,7 +162,10 @@ function tc26_collab_mutation(string $action): bool {
 }
 
 function tc26_collab_assert_available($db, string $shipmentId, string $deviceId): ?array {
-    if ($shipmentId === '' || $deviceId === '') return null;
+    if ($shipmentId === '') return ['ok'=>0,'err'=>'Missing shipment_id'];
+    if ($deviceId === '') {
+        return ['ok'=>0,'err'=>'Update this Zebra to the Multi-Zebra version before changing or printing a shipment.'];
+    }
     $lock = tc26_collab_lock($db, $shipmentId);
     if ($lock && !hash_equals((string)$lock['device_id'], $deviceId)) {
         return [
