@@ -208,6 +208,22 @@ try {
         }
         ps_out($st);
     }
+    if ($action === 'shipment_save') {
+        $sid = trim((string)($input['shipment_id'] ?? ''));
+        if ($sid === '') ps_out(['ok'=>0,'err'=>'Missing shipment_id'], 400);
+        $st = ps_shipment_detail($dbx, $sid);
+        if (empty($st['ok'])) ps_out($st);
+        $status = strtoupper(trim((string)($st['status'] ?? ($st['shipment']['status'] ?? 'OPEN'))));
+        if ($status !== 'OPEN') ps_out(['ok'=>0,'err'=>'Only an open shipment can be saved for later']);
+        // Shipment contents already live in the central database. This action is
+        // an explicit server-side checkpoint used by the APK before it leaves
+        // the shipment, so another Zebra can immediately resume the same ID.
+        smp_db_exec($dbx, "UPDATE shipments SET status='OPEN' WHERE shipment_id=?", [$sid]);
+        $st = ps_shipment_detail($dbx, $sid);
+        $st['saved_for_later'] = 1;
+        $st['message'] = 'Shipment saved on server and available to every Zebra';
+        ps_out($st);
+    }
     if ($action === 'shipment_set_order') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
         smp_db_exec($dbx,
