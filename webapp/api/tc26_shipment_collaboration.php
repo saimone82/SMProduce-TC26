@@ -136,16 +136,21 @@ function tc26_collab_takeover($db, array $cfg, string $shipmentId, string $devic
     if ($expected === '' || !hash_equals($expected, hash('sha256', $password))) {
         return ['ok'=>0,'err'=>'Incorrect Shipment Take Over password'];
     }
-    tc26_collab_setup($db);
-    smp_db_exec($db,
-        "INSERT INTO tc26_shipment_takeovers (shipment_id,device_id,taken_at,updated_at)
-         VALUES (?,?,NOW(),NOW())
-         ON DUPLICATE KEY UPDATE device_id=VALUES(device_id),taken_at=NOW(),updated_at=NOW()",
-        [$shipmentId, $deviceId]
-    );
-    tc26_collab_touch($db, $shipmentId, $deviceId);
-    return ['ok'=>1,'shipment_taken_over'=>1,
-            'msg'=>'Shipment taken over on this Zebra. Other Zebras can continue palletizing.'];
+    // Same advisory lock as shipment scans: no in-flight shipment operation
+    // can slip through while the takeover is being recorded.
+    return tc26_collab_critical($db, 'shipment:'.$shipmentId,
+        function() use ($db, $shipmentId, $deviceId): array {
+            tc26_collab_setup($db);
+            smp_db_exec($db,
+                "INSERT INTO tc26_shipment_takeovers (shipment_id,device_id,taken_at,updated_at)
+                 VALUES (?,?,NOW(),NOW())
+                 ON DUPLICATE KEY UPDATE device_id=VALUES(device_id),taken_at=NOW(),updated_at=NOW()",
+                [$shipmentId, $deviceId]
+            );
+            tc26_collab_touch($db, $shipmentId, $deviceId);
+            return ['ok'=>1,'shipment_taken_over'=>1,
+                    'msg'=>'Shipment taken over on this Zebra. Other Zebras can continue palletizing.'];
+        });
 }
 
 function tc26_collab_add_status($db, array $status, string $shipmentId, string $deviceId): array {
