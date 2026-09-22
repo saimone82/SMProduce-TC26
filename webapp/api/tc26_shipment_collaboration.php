@@ -3,8 +3,33 @@ declare(strict_types=1);
 
 /**
  * Shared-shipment coordination for TC26 Zebra devices.
- * Pallet creation and pallet scans are intentionally NOT coordinated here.
+ * Pallet creation itself is intentionally never blocked.
  */
+
+/**
+ * MySQL advisory locks make the check-and-insert sequence atomic across
+ * several Zebra HTTP requests. A busy lock fails safely; no duplicate is saved.
+ */
+function tc26_collab_critical($db, string $scope, callable $operation): array {
+    $key = 'smp-tc26-' . substr(hash('sha256', $scope), 0, 52);
+    $locked = false;
+    try {
+        $row = smp_db_fetch_one($db, 'SELECT GET_LOCK(?, 8) AS locked', [$key]);
+        if ((int)($row['locked'] ?? 0) !== 1) {
+            return ['ok'=>0,'err'=>'Another Zebra is completing this scan. Please scan once more.'];
+        }
+        $locked = true;
+        return $operation();
+    } catch (Throwable $e) {
+        return ['ok'=>0,'err'=>'Server could not safely coordinate this concurrent scan. Please retry.'];
+    } finally {
+        if ($locked) {
+            try { smp_db_fetch_one($db, 'SELECT RELEASE_LOCK(?) AS released', [$key]); }
+            catch (Throwable $ignored) {}
+        }
+    }
+}
+
 
 function tc26_collab_device_id(array $input): string {
     $id = trim((string)($input['client_device_id'] ?? ''));
