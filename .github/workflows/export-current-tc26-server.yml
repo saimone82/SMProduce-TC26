@@ -1,0 +1,17 @@
+name: Export Current TC26 Server Files
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/tc26-bol-three-copies-20260922]
+    paths: ['.github/workflows/export-current-tc26-server.yml']
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TC26-Current-Server-Files
+          path: |
+            webapp/pages/api/tc26_shipping_api.php
+            webapp/api/pallets_shipping_app.php
