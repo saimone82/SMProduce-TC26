@@ -1,0 +1,18 @@
+name: Verify TC26 multi-Zebra server
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/tc26-2052-multi-zebra]
+    paths:
+      - 'webapp/api/pallets_shipping_app.php'
+      - 'webapp/api/tc26_shipment_collaboration.php'
+      - '.github/workflows/verify-tc26-multi-zebra.yml'
+permissions:
+  contents: read
+jobs:
+  php-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: php -l webapp/api/tc26_shipment_collaboration.php
+      - run: php -l webapp/api/pallets_shipping_app.php
