@@ -216,15 +216,25 @@ try {
 
     if ($action === 'shipment_new') {
         $sid = smp_tc26_open_shipment($dbx, $uid, '');
+        $claim = tc26_collab_critical($dbx, 'shipment:'.$sid,
+            function() use ($dbx, $sid, $deviceId): array {
+                return tc26_collab_claim_shipment($dbx, $sid, $deviceId);
+            });
+        if (empty($claim['ok'])) ps_out($claim);
         ps_out(tc26_collab_add_status($dbx, ps_shipment_detail($dbx, $sid), $sid, $deviceId));
     }
     if ($action === 'shipment_resume') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        $st = ps_shipment_detail($dbx, $sid);
-        if (!empty($st['ok']) && strtoupper((string)($st['status'] ?? '')) !== 'OPEN') {
-            ps_out(['ok'=>0, 'err'=>'The scanned shipment is not open']);
-        }
-        ps_out(tc26_collab_add_status($dbx, $st, $sid, $deviceId));
+        $out = tc26_collab_critical($dbx, 'shipment:'.$sid,
+            function() use ($dbx, $sid, $deviceId): array {
+                $st = ps_shipment_detail($dbx, $sid);
+                if (!empty($st['ok']) && strtoupper((string)($st['status'] ?? '')) !== 'OPEN') {
+                    return ['ok'=>0, 'err'=>'The scanned shipment is not open'];
+                }
+                $claim = tc26_collab_claim_shipment($dbx, $sid, $deviceId);
+                return empty($claim['ok']) ? $claim : $st;
+            });
+        ps_out(tc26_collab_add_status($dbx, $out, $sid, $deviceId));
     }
     if ($action === 'shipment_set_order') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
