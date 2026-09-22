@@ -15,7 +15,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Package JDK
-        run: tar -C "$(dirname "$JAVA_HOME")" -czf tc26-jdk17.tar.gz "$(basename "$JAVA_HOME")"
+        run: tar -h -C "$(dirname "$JAVA_HOME")" -czf tc26-jdk17.tar.gz "$(basename "$JAVA_HOME")"
       - uses: actions/upload-artifact@v4
         with:
           name: TC26-JDK17
