@@ -70,7 +70,7 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b); queue = new QueueDb(this); buildShell(); registerReceivers(); configureDataWedge(); checkNetwork(); render();healthHandler.postDelayed(healthRunnable,1000);
     }
-    @Override protected void onResume(){ super.onResume(); configureDataWedge(); if(cameraScreen&&barcodeView!=null)barcodeView.resume(); }
+    @Override protected void onResume(){ super.onResume(); configureDataWedge(); enableHardwareScanner(); if(cameraScreen&&barcodeView!=null)barcodeView.resume(); }
     @Override protected void onPause(){ if(barcodeView!=null)barcodeView.pause(); super.onPause(); }
     @Override public void onDestroy(){ super.onDestroy();healthHandler.removeCallbacks(healthRunnable);try{unregisterReceiver(scannerReceiver);}catch(Exception ignored){} try{unregisterReceiver(networkReceiver);}catch(Exception ignored){} io.shutdownNow(); tone.release(); }
 
@@ -130,7 +130,7 @@ public class MainActivity extends Activity {
             case SHIP_SCAN: scanScreen(false); break;
             case SHIP_FINISH: heading(tr("Review the shipment","Revise el envío"),shipmentId);
                 detail=tv((selectedOrder==null?tr("No PO selected","Sin PO"):selectedOrder.optString("po")+" · "+selectedOrder.optString("customer_name"))+"\n"+palletCount+" "+tr("pallets","pallets")+" · "+shipmentCases+" "+tr("cases","cajas"),18,Color.WHITE);body.addView(detail);
-                addSpace(18); choice("Save and Continue Later","Guardar y continuar después",v->done(tr("Shipment saved","Envío guardado")));
+                addSpace(18); choice("Save and Continue Later","Guardar y continuar después",v->saveShipmentForLater());
                 choice("Close Shipment","Cerrar envío",v->closeShipment()); break;
             case DONE: heading(tr("Completed","Terminado"),subtitle==null?"":subtitle.getText().toString());
                 choice("Back to Home","Volver al inicio",v->resetHome()); break;
@@ -317,9 +317,61 @@ public class MainActivity extends Activity {
         if(step==Step.SHIP_SCAN){scanPallet(code);return;}
         if(manual!=null)manual.setText(code);
     }
-    void addCameraButtons(){Button scan=choice("SCAN BARCODE","ESCANEAR CÓDIGO",v->launchCameraScan());scan.setTextSize(21);scan.setBackgroundColor(Color.rgb(198,40,40));Button toggle=choice(useFrontCamera?"Camera: FRONT":"Camera: REAR",useFrontCamera?"Cámara: FRONTAL":"Cámara: TRASERA",v->{useFrontCamera=!useFrontCamera;render();});toggle.setBackgroundColor(Color.rgb(52,65,85));}
+    boolean isZebraScannerDevice(){
+        String maker=(Build.MANUFACTURER==null?"":Build.MANUFACTURER).toLowerCase(Locale.US);
+        String model=(Build.MODEL==null?"":Build.MODEL).toUpperCase(Locale.US);
+        return maker.contains("zebra")||maker.contains("symbol")||maker.contains("motorola")||
+               model.startsWith("TC")||model.startsWith("MC");
+    }
+    boolean isTc55(){String model=(Build.MODEL==null?"":Build.MODEL).toUpperCase(Locale.US);return model.startsWith("TC55");}
+    void enableHardwareScanner(){
+        if(!isZebraScannerDevice())return;
+        try{
+            if(isTc55()){
+                Intent i=new Intent("com.motorolasolutions.emdk.datawedge.api.ACTION_SCANNERINPUTPLUGIN");
+                i.putExtra("com.motorolasolutions.emdk.datawedge.api.EXTRA_PARAMETER","ENABLE_PLUGIN");
+                sendBroadcast(i);
+            }else{
+                Intent i=new Intent("com.symbol.datawedge.api.ACTION");
+                i.putExtra("com.symbol.datawedge.api.SCANNER_INPUT_PLUGIN","ENABLE_PLUGIN");
+                sendBroadcast(i);
+                Intent compat=new Intent("com.symbol.datawedge.api.ACTION_SCANNERINPUTPLUGIN");
+                compat.putExtra("com.symbol.datawedge.api.EXTRA_PARAMETER","ENABLE_PLUGIN");
+                sendBroadcast(compat);
+            }
+        }catch(Exception ignored){}
+    }
+    void triggerHardwareScanner(){
+        enableHardwareScanner();
+        healthHandler.postDelayed(()->{
+            try{
+                if(isTc55()){
+                    Intent i=new Intent("com.motorolasolutions.emdk.datawedge.api.ACTION_SOFTSCANTRIGGER");
+                    i.putExtra("com.motorolasolutions.emdk.datawedge.api.EXTRA_PARAMETER","START_SCANNING");
+                    sendBroadcast(i);
+                }else{
+                    Intent i=new Intent("com.symbol.datawedge.api.ACTION");
+                    i.putExtra("com.symbol.datawedge.api.SOFT_SCAN_TRIGGER","START_SCANNING");
+                    sendBroadcast(i);
+                }
+            }catch(Exception e){launchCameraScan();}
+        },isTc55()?250:80);
+    }
+    void addCameraButtons(){
+        if(isZebraScannerDevice()){
+            Button scan=choice("SCAN BARCODE","ESCANEAR CÓDIGO",v->triggerHardwareScanner());
+            scan.setTextSize(21);scan.setBackgroundColor(Color.rgb(198,40,40));
+            Button camera=choice("Use Camera","Usar cámara",v->launchCameraScan());
+            camera.setBackgroundColor(Color.rgb(52,65,85));
+            return;
+        }
+        Button scan=choice("SCAN BARCODE","ESCANEAR CÓDIGO",v->launchCameraScan());
+        scan.setTextSize(21);scan.setBackgroundColor(Color.rgb(198,40,40));
+        Button toggle=choice(useFrontCamera?"Camera: FRONT":"Camera: REAR",useFrontCamera?"Cámara: FRONTAL":"Cámara: TRASERA",v->{useFrontCamera=!useFrontCamera;render();});
+        toggle.setBackgroundColor(Color.rgb(52,65,85));
+    }
     int cameraId(boolean front){if(!front)return 0;try{for(int i=0;i<Camera.getNumberOfCameras();i++){Camera.CameraInfo x=new Camera.CameraInfo();Camera.getCameraInfo(i,x);if(x.facing==Camera.CameraInfo.CAMERA_FACING_FRONT)return i;}}catch(Exception ignored){}return 0;}
-    void launchCameraScan(){if(checkSelfPermission(android.Manifest.permission.CAMERA)!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{android.Manifest.permission.CAMERA},7001);return;}showCamera();}
+    void launchCameraScan(){if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(android.Manifest.permission.CAMERA)!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{android.Manifest.permission.CAMERA},7001);return;}showCamera();}
     void showCamera(){try{cameraScreen=true;LinearLayout shell=new LinearLayout(this);shell.setOrientation(LinearLayout.VERTICAL);shell.setBackgroundColor(Color.BLACK);barcodeView=new DecoratedBarcodeView(this);barcodeView.setStatusText(tr("Place the barcode inside the frame","Coloque el código dentro del marco"));CameraSettings settings=new CameraSettings();settings.setRequestedCameraId(cameraId(useFrontCamera));barcodeView.getBarcodeView().setCameraSettings(settings);shell.addView(barcodeView,new LinearLayout.LayoutParams(-1,0,1));Button cancel=button(tr("CANCEL","CANCELAR"),Color.rgb(52,65,85));cancel.setOnClickListener(v->closeCamera());shell.addView(cancel,new LinearLayout.LayoutParams(-1,dp(70)));setContentView(shell);barcodeView.decodeSingle(new BarcodeCallback(){@Override public void barcodeResult(BarcodeResult result){if(result==null||result.getText()==null)return;String value=result.getText();runOnUiThread(()->{closeCamera();onScan(value);});}});barcodeView.resume();}catch(Exception e){cameraScreen=false;buildShell();render();error(tr("Camera unavailable","Cámara no disponible"));}}
     void closeCamera(){if(barcodeView!=null){try{barcodeView.pause();}catch(Exception ignored){}barcodeView=null;}cameraScreen=false;buildShell();render();}
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==7001){if(grantResults.length>0&&grantResults[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)showCamera();else error(tr("Camera permission is required","Se requiere permiso para la cámara"));}}
@@ -343,6 +395,15 @@ public class MainActivity extends Activity {
         call(map("action",cases?"pallet_remove_last":"shipment_remove_last",cases?"pallet_id":"shipment_id",cases?palletId:shipmentId),j->{if(cases){caseCount=j.optInt("cases_count");if(!scannedCases.isEmpty())scannedCases.remove(scannedCases.size()-1);scanErrorMessage="";}else{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");shipmentMismatch=false;shipmentCompareMessage="";}render();if(!cases&&selectedOrder!=null)checkPoAfterScan();});
     }
     void finishPallet(boolean complete){ if(!online||queue.countFor(palletId)>0){error(tr("Wait for synchronization before finishing","Espere la sincronización antes de finalizar"));return;}call(map("action",complete?"pallet_close":"pallet_partial","pallet_id",palletId),j->{if(j.optInt("label_printed",0)!=1){error(tr("Pallet saved, but the label was not sent. Check the printer selected in Pallets Manage.","Pallet guardado, pero la etiqueta no fue enviada. Compruebe la impresora seleccionada en Pallets Manage."));return;}done(complete?tr("Pallet closed as complete and sent to print","Pallet cerrado como completo y enviado a imprimir"):tr("Pallet closed as partial and sent to print","Pallet cerrado como parcial y enviado a imprimir"));}); }
+    void saveShipmentForLater(){
+        if(!online){error(tr("Connect before saving the shipment for another Zebra","Conéctese antes de guardar el envío para otro Zebra"));return;}
+        if(shipmentId.isEmpty()){error(tr("No shipment is open","No hay un envío abierto"));return;}
+        if(queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before saving","Espere la sincronización antes de guardar"));return;}
+        call(map("action","shipment_resume","shipment_id",shipmentId),j->{
+            palletCount=j.optInt("pallet_count",palletCount);shipmentCases=j.optInt("cases_count",shipmentCases);
+            done(tr("Shipment saved on the server — it can be reopened from any Zebra","Envío guardado en el servidor — puede reabrirse desde cualquier Zebra"));
+        });
+    }
     void closeShipment(){
         if(!online||queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before closing","Espere la sincronización antes de cerrar"));return;}
         if(palletCount<=0){error(tr("Scan at least one pallet","Escanee al menos un pallet"));return;}
@@ -471,7 +532,7 @@ public class MainActivity extends Activity {
 
     void registerReceivers(){
         scannerReceiver=new BroadcastReceiver(){public void onReceive(Context c,Intent i){String code=i.getStringExtra("com.symbol.datawedge.data_string");if(code==null)code=i.getStringExtra("com.motorolasolutions.emdk.datawedge.data_string");onScan(code);}};
-        IntentFilter sf=new IntentFilter();sf.addAction("com.smproduce.PALLETS_SHIPPING.SCAN");sf.addAction("com.symbol.datawedge.api.RESULT_ACTION");registerReceiver(scannerReceiver,sf,Build.VERSION.SDK_INT>=33?Context.RECEIVER_EXPORTED:0);
+        IntentFilter sf=new IntentFilter();sf.addAction("com.smproduce.PALLETS_SHIPPING.SCAN");sf.addAction("com.symbol.datawedge.api.RESULT_ACTION");if(Build.VERSION.SDK_INT>=33)registerReceiver(scannerReceiver,sf,Context.RECEIVER_EXPORTED);else registerReceiver(scannerReceiver,sf);
         networkReceiver=new BroadcastReceiver(){public void onReceive(Context c,Intent i){checkNetwork();}};registerReceiver(networkReceiver,new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event){
@@ -499,8 +560,9 @@ public class MainActivity extends Activity {
         Bundle keyParams=new Bundle();keyParams.putString("keystroke_output_enabled","false");Bundle keyOut=new Bundle();keyOut.putString("PLUGIN_NAME","KEYSTROKE");keyOut.putString("RESET_CONFIG","true");keyOut.putBundle("PARAM_LIST",keyParams);Bundle keyCfg=new Bundle();keyCfg.putString("PROFILE_NAME",profile);keyCfg.putString("PROFILE_ENABLED","true");keyCfg.putString("CONFIG_MODE","UPDATE");keyCfg.putBundle("PLUGIN_CONFIG",keyOut);Intent setKey=new Intent("com.symbol.datawedge.api.ACTION");setKey.putExtra("com.symbol.datawedge.api.SET_CONFIG",keyCfg);sendBroadcast(setKey);
     }
     void setOnlineState(boolean value){online=value;network.setText(online?tr("● ONLINE","● EN LÍNEA"):tr("● OFFLINE","● SIN CONEXIÓN"));network.setTextColor(online?Color.rgb(102,187,106):Color.rgb(255,143,0));}
-    void checkNetwork(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);boolean internet=cap!=null&&cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);if(!internet)setOnlineState(false);else probeServer();}
-    void probeServer(){if(probing||io.isShutdown())return;ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);Network n=cm.getActiveNetwork();NetworkCapabilities cap=n==null?null:cm.getNetworkCapabilities(n);if(cap==null||!cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)){setOnlineState(false);return;}probing=true;io.execute(()->{boolean reachable=false;try{JSONObject j=request(map("action","ping"));reachable=j.optInt("ok")==1;}catch(Exception ignored){}boolean ok=reachable;runOnUiThread(()->{boolean was=online;probing=false;setOnlineState(ok);if(ok&&!was)syncQueue();});});}
+    boolean hasInternetNetwork(){ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);if(cm==null)return false;NetworkInfo info=cm.getActiveNetworkInfo();return info!=null&&info.isConnected();}
+    void checkNetwork(){if(!hasInternetNetwork())setOnlineState(false);else probeServer();}
+    void probeServer(){if(probing||io.isShutdown())return;if(!hasInternetNetwork()){setOnlineState(false);return;}probing=true;io.execute(()->{boolean reachable=false;try{JSONObject j=request(map("action","ping"));reachable=j.optInt("ok")==1;}catch(Exception ignored){}boolean ok=reachable;runOnUiThread(()->{boolean was=online;probing=false;setOnlineState(ok);if(ok&&!was)syncQueue();});});}
     void syncQueue(){io.execute(()->{List<QueueDb.Item>items=queue.all();int done=0;for(QueueDb.Item x:items){try{
             if(x.type.equals("CREATE_PALLET")){JSONObject j=request(map("action","pallet_new"));if(j.optInt("ok")!=1)break;String real=j.optString("pallet_id");queue.replaceParent(x.parent,real);queue.remove(x.id);if(palletId.equals(x.parent))palletId=real;done++;continue;}
             Map<String,String>m=x.type.equals("CASE")?map("action","pallet_scan_case","pallet_id",x.parent,"case_serial",x.code):map("action","shipment_scan_pallet","shipment_id",x.parent,"pallet_id",x.code);JSONObject j=request(m);if(j.optInt("ok")==1||j.optString("err").toLowerCase().contains("already")){queue.remove(x.id);done++;}else break;}catch(Exception e){break;}}int d=done;if(d>0)runOnUiThread(()->{Toast.makeText(this,tr("Synchronized ","Sincronizados ")+d,Toast.LENGTH_LONG).show();refreshCurrent();});});}
