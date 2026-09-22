@@ -11,6 +11,7 @@ if (session_status() === PHP_SESSION_NONE) session_start();
 require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/print_engine.php';
 require_once __DIR__ . '/../../includes/empty_bin_report.php';
+require_once __DIR__ . '/../../api/tc26_shipment_collaboration.php';
 
 ob_clean();
 header('Content-Type: application/json; charset=utf-8');
@@ -33,7 +34,32 @@ if (!empty($pdo))      $dbx = $pdo;
 elseif (!empty($conn)) $dbx = $conn;
 if (!$dbx) { echo json_encode(['ok'=>0,'err'=>'DB not available']); exit; }
 
+
 smp_ensure_tc26_tables($dbx);
+
+/**
+ * Every write/print from the browser uses the same exclusive shipment owner
+ * record as the Zebra app.  A browser never bypasses a Zebra that has it open.
+ */
+function tc26_shipping_request_device_id(): string {
+    $id = tc26_collab_device_id($_POST);
+    if ($id !== '') return $id;
+    if (!empty($GLOBALS['isPalletsShippingApp'])) return '';
+    return tc26_collab_web_device_id();
+}
+function tc26_shipping_owner_guard($dbx, string $sid): array {
+    $deviceId = tc26_shipping_request_device_id();
+    if ($deviceId === '') {
+        return ['ok'=>0,'err'=>'Update this Zebra to the Multi-Zebra version before opening a shipment.'];
+    }
+    return tc26_collab_enter_shipment($dbx, $sid, $deviceId);
+}
+function tc26_shipping_owner_error(array $result): void {
+    http_response_code(409);
+    echo json_encode($result);
+    exit;
+}
+
 
 // ── bol_pdf_manual  (POST → genera PDF con valori manuali dal viewer) ────
 {
@@ -45,6 +71,13 @@ smp_ensure_tc26_tables($dbx);
             ob_clean(); http_response_code(400);
             header('Content-Type: text/plain');
             echo 'Missing shipment ID.'; exit;
+        }
+        $ownerGate = tc26_shipping_owner_guard($dbx, $sid);
+        if (empty($ownerGate['ok'])) {
+            ob_clean(); http_response_code(409);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo (string)($ownerGate['err'] ?? 'Shipment is already open on another device.');
+            exit;
         }
 
         // Leggi dati shipment dal DB (per header, customer, bo num, ecc.)
@@ -199,6 +232,13 @@ smp_ensure_tc26_tables($dbx);
             ob_clean(); http_response_code(400);
             header('Content-Type: text/plain');
             echo 'Missing shipment ID.'; exit;
+        }
+        $ownerGate = tc26_shipping_owner_guard($dbx, $sid);
+        if (empty($ownerGate['ok'])) {
+            ob_clean(); http_response_code(409);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo (string)($ownerGate['err'] ?? 'Shipment is already open on another device.');
+            exit;
         }
 
         // ── Generate on-the-fly if PDF not cached ────────────────────────
@@ -1667,6 +1707,23 @@ HTML;
 $action = $_POST['action'] ?? '';
 $uid    = (int)($_SESSION['user_id'] ?? 0);
 
+/*
+ * Mutation and print endpoints are guarded before they touch a shipment.
+ * Read-only status stays visible, so the web page can show that the shipment
+ * is busy without being allowed to print labels or change it.
+ */
+$tc26OwnerActions = [
+    'scan', 'save_bol_view', 'save_order_info', 'close',
+    'delete_shipment', 'remove_pallet', 'queue_bol_print', 'bol'
+];
+if (in_array($action, $tc26OwnerActions, true)) {
+    $guardSid = preg_replace('/[^A-Za-z0-9_\\-]/', '', (string)($_POST['shipment_id'] ?? ''));
+    if ($guardSid !== '') {
+        $ownerGate = tc26_shipping_owner_guard($dbx, $guardSid);
+        if (empty($ownerGate['ok'])) tc26_shipping_owner_error($ownerGate);
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pallet_rows_full($dbx, string $sid, int $limit = 200): array {
     // include case_count per pallet
@@ -2581,8 +2638,18 @@ try {
 
     // ── open ──────────────────────────────────────────────────────────────────
     if ($action === 'open') {
-        $shipIdIn = trim((string)($_POST['shipment_id'] ?? ''));
+        $shipIdIn = preg_replace('/[^A-Za-z0-9_\\-]/', '', trim((string)($_POST['shipment_id'] ?? '')));
+        // An existing ID is an attempt to reopen/resume it: it must be claimed
+        // before the old open routine can alter any shipment row.
+        if ($shipIdIn !== '') {
+            $ownerGate = tc26_shipping_owner_guard($dbx, $shipIdIn);
+            if (empty($ownerGate['ok'])) tc26_shipping_owner_error($ownerGate);
+        }
         $sid = smp_tc26_open_shipment($dbx, $uid, $shipIdIn);
+        if ($shipIdIn === '') {
+            $ownerGate = tc26_shipping_owner_guard($dbx, $sid);
+            if (empty($ownerGate['ok'])) tc26_shipping_owner_error($ownerGate);
+        }
         $st  = smp_tc26_shipment_status($dbx, $sid);
         $st['pallet_rows'] = pallet_rows_full($dbx, $sid);
         echo json_encode($st);
@@ -2597,6 +2664,11 @@ try {
             $st['pallet_rows'] = pallet_rows_full($dbx, $sid);
             $det = shipment_detail($dbx, $sid);
             if ($det) $st = array_merge($st, $det);
+            $owner = tc26_collab_lock($dbx, $sid);
+            $requestDevice = tc26_shipping_request_device_id();
+            $st['shipment_in_use'] = ($owner && $requestDevice !== ''
+                && !hash_equals((string)$owner['device_id'], $requestDevice)) ? 1 : 0;
+            $st['take_over_required'] = !empty($st['shipment_in_use']) ? 1 : 0;
         }
         echo json_encode($st);
         exit;
