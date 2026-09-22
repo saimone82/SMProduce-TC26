@@ -1,5 +1,5 @@
 name: Build Pallets Shipping APK
-on: { workflow_dispatch: {}, push: { branches: [ main, fix/shared-shipment-tc55-scanner ] } }
+on: { workflow_dispatch: {}, push: { branches: [ main ] } }
 jobs:
   build:
     runs-on: ubuntu-latest
