@@ -83,6 +83,86 @@ if (stripos((string)($_SERVER['CONTENT_TYPE'] ?? ''), 'application/json') !== fa
 $action = trim((string)($input['action'] ?? ''));
 $uid = 0;
 
+function ps_shipment_meta(array $input, int $uid): array {
+    return [
+        'device_id'=>substr(trim((string)($input['device_id'] ?? '')),0,190),
+        'device_model'=>substr(trim((string)($input['device_model'] ?? '')),0,190),
+        'operator_id'=>$uid,
+        'operator_name'=>substr(trim((string)($input['operator_name'] ?? 'APP USER')),0,190),
+        'app_version'=>substr(trim((string)($input['app_version'] ?? '')),0,60),
+    ];
+}
+
+function ps_multi_init($db): void {
+    smp_db_exec($db,"CREATE TABLE IF NOT EXISTS tc26_shipment_device_sessions (
+        shipment_id VARCHAR(100) NOT NULL, device_id VARCHAR(190) NOT NULL,
+        device_model VARCHAR(190) NOT NULL DEFAULT '', operator_id INT NOT NULL DEFAULT 0,
+        operator_name VARCHAR(190) NOT NULL DEFAULT '', app_version VARCHAR(60) NOT NULL DEFAULT '',
+        first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (shipment_id,device_id), KEY idx_tc26_shipment_seen (shipment_id,last_seen)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    smp_db_exec($db,"CREATE TABLE IF NOT EXISTS tc26_shipment_pallet_devices (
+        shipment_id VARCHAR(100) NOT NULL, pallet_id VARCHAR(100) NOT NULL, device_id VARCHAR(190) NOT NULL,
+        added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (shipment_id,pallet_id), KEY idx_tc26_shipment_device (shipment_id,device_id,added_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    smp_db_exec($db,"CREATE TABLE IF NOT EXISTS tc26_shipment_takeovers (
+        shipment_id VARCHAR(100) NOT NULL PRIMARY KEY, device_id VARCHAR(190) NOT NULL,
+        device_model VARCHAR(190) NOT NULL DEFAULT '', operator_id INT NOT NULL DEFAULT 0,
+        operator_name VARCHAR(190) NOT NULL DEFAULT '', taken_over_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+function ps_shipment_touch($db,string $sid,array $meta): void {
+    $deviceId=trim((string)($meta['device_id']??'')); if($sid===''||$deviceId==='') return;
+    smp_db_exec($db,"INSERT INTO tc26_shipment_device_sessions(shipment_id,device_id,device_model,operator_id,operator_name,app_version)
+        VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE device_model=VALUES(device_model),operator_id=VALUES(operator_id),
+        operator_name=VALUES(operator_name),app_version=VALUES(app_version),last_seen=CURRENT_TIMESTAMP",
+        [$sid,$deviceId,(string)($meta['device_model']??''),(int)($meta['operator_id']??0),(string)($meta['operator_name']??''),(string)($meta['app_version']??'')]);
+}
+
+function ps_shipment_other_devices($db,string $sid,string $deviceId): array {
+    if($deviceId==='') return [];
+    return smp_db_fetch_all($db,"SELECT device_id,device_model,operator_name,last_seen
+        FROM tc26_shipment_device_sessions WHERE shipment_id=? AND device_id<>?
+        AND last_seen>=DATE_SUB(NOW(),INTERVAL 15 MINUTE) ORDER BY last_seen DESC",[$sid,$deviceId]);
+}
+
+function ps_shipment_takeover_row($db,string $sid): ?array {
+    return smp_db_fetch_one($db,"SELECT shipment_id,device_id,device_model,operator_name FROM tc26_shipment_takeovers WHERE shipment_id=? LIMIT 1",[$sid]) ?: null;
+}
+
+function ps_shipment_takeover_guard($db,string $sid,array $meta): ?array {
+    $row=ps_shipment_takeover_row($db,$sid); if(!$row) return null;
+    $deviceId=trim((string)($meta['device_id']??''));
+    if($deviceId!==''&&hash_equals((string)$row['device_id'],$deviceId)) return null;
+    return ['ok'=>0,'err'=>'This shipment is being taken over on another Zebra. Shipment actions are temporarily blocked.','shipment_taken_over'=>1];
+}
+
+function ps_shipment_takeover_password_valid(array $cfg,string $password): bool {
+    $expected=strtolower(trim((string)($cfg['shipment_takeover_password_sha256'] ?? $cfg['skip_po_password_sha256'] ?? '')));
+    return $expected!==''&&hash_equals($expected,hash('sha256',$password));
+}
+
+function ps_shipment_device_pallets($db,string $sid,string $deviceId,bool $private): array {
+    $sql="SELECT sp.id,sp.pallet_id,(SELECT COUNT(*) FROM pallet_cases pc WHERE pc.pallet_id=sp.pallet_id) cases_count
+          FROM shipment_pallets sp";
+    $args=[$sid];
+    if($private&&$deviceId!==''){
+        $sql.=" JOIN tc26_shipment_pallet_devices d ON d.shipment_id=sp.shipment_id AND d.pallet_id=sp.pallet_id
+                WHERE sp.shipment_id=? AND d.device_id=? ORDER BY d.added_at DESC,sp.id DESC";
+        $args[]=$deviceId;
+    } else $sql.=" WHERE sp.shipment_id=? ORDER BY sp.id DESC";
+    return smp_db_fetch_all($db,$sql,$args);
+}
+
+function ps_lock_new_pallet($db): void {
+    if(!($db instanceof PDO)) return;
+    $st=$db->prepare('SELECT GET_LOCK(?,5)');$st->execute(['smproduce-pallet-new']);
+    if((int)$st->fetchColumn()!==1) ps_out(['ok'=>0,'err'=>'Another Zebra is creating a pallet. Please retry.'],409);
+    register_shutdown_function(static function()use($db){try{$x=$db->prepare('SELECT RELEASE_LOCK(?)');$x->execute(['smproduce-pallet-new']);}catch(Throwable $e){}});
+}
+
 function ps_pallet_detail($db, string $pid): array {
     $st = smp_tc26_pallet_status($db, $pid);
     if (empty($st['ok'])) return $st;
@@ -93,23 +173,43 @@ function ps_pallet_detail($db, string $pid): array {
     return $st;
 }
 
-function ps_shipment_detail($db, string $sid): array {
+function ps_shipment_detail($db, string $sid, ?array $meta=null, bool $privateView=false): array {
     $st = smp_tc26_shipment_status($db, $sid);
     if (empty($st['ok'])) return $st;
+    $meta=$meta??[]; $deviceId=trim((string)($meta['device_id']??''));
+    if($deviceId!=='') $privateView=true;
     $ship = smp_db_fetch_one($db,
         "SELECT shipment_id,status,po,customer_name,order_id,ship_date,
                 DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s') created_at,
                 DATE_FORMAT(closed_at,'%Y-%m-%d %H:%i:%s') closed_at
          FROM shipments WHERE shipment_id=?", [$sid]);
-    $st['shipment'] = $ship ?: [];
-    $st['pallets'] = smp_db_fetch_all($db,
-        "SELECT sp.id,sp.pallet_id,
-                (SELECT COUNT(*) FROM pallet_cases pc WHERE pc.pallet_id=sp.pallet_id) cases_count
-         FROM shipment_pallets sp WHERE sp.shipment_id=? ORDER BY sp.id DESC", [$sid]);
+    $pallets=ps_shipment_device_pallets($db,$sid,$deviceId,$privateView);
+    $st['shipment']=$ship?:[]; $st['pallets']=$pallets;
+    $st['pallet_count']=count($pallets); $st['cases_count']=array_sum(array_map(static fn(array $p):int=>(int)($p['cases_count']??0),$pallets));
+    $other=ps_shipment_other_devices($db,$sid,$deviceId);
+    $st['other_devices_active']=count($other); $st['shipment_in_progress_elsewhere']=$other?1:0;
+    $st['other_devices_message']=$other?'Shipment already in progress on another Zebra. Your pallets and scans remain private.':'';
+    $takeover=ps_shipment_takeover_row($db,$sid);
+    $st['shipment_taken_over']=$takeover?1:0;
+    $st['takeover_by_this_device']=$takeover&&$deviceId!==''&&hash_equals((string)$takeover['device_id'],$deviceId)?1:0;
+    $st['private_device_view']=$privateView?1:0;
     return $st;
 }
 
 try {
+    if (substr($action,0,9)==='shipment_') {
+        ps_multi_init($dbx);
+        $shipmentMeta=ps_shipment_meta($input,$uid);
+        $activeShipmentId=trim((string)($input['shipment_id']??''));
+        if($activeShipmentId!==''&&$action!=='shipment_open_list'){
+            ps_shipment_touch($dbx,$activeShipmentId,$shipmentMeta);
+            if(in_array($action,['shipment_set_order','shipment_scan_pallet','shipment_remove_last','shipment_close'],true)){
+                $blocked=ps_shipment_takeover_guard($dbx,$activeShipmentId,$shipmentMeta);
+                if($blocked) ps_out($blocked,423);
+            }
+        }
+    }
+    if ($action === 'pallet_new') ps_lock_new_pallet($dbx);
     if ($action === 'ping') ps_out(['ok'=>1, 'api_version'=>'1.4.2', 'server_time'=>date(DATE_ATOM)]);
 
     if ($action === 'case_check') {
@@ -198,11 +298,12 @@ try {
 
     if ($action === 'shipment_new') {
         $sid = smp_tc26_open_shipment($dbx, $uid, '');
-        ps_out(ps_shipment_detail($dbx, $sid));
+        $shipmentMeta=ps_shipment_meta($input,$uid); ps_shipment_touch($dbx,$sid,$shipmentMeta);
+        ps_out(ps_shipment_detail($dbx, $sid, $shipmentMeta, true));
     }
     if ($action === 'shipment_resume') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        $st = ps_shipment_detail($dbx, $sid);
+        $st = ps_shipment_detail($dbx, $sid, $shipmentMeta, true);
         if (!empty($st['ok']) && strtoupper((string)($st['status'] ?? '')) !== 'OPEN') {
             ps_out(['ok'=>0, 'err'=>'The scanned shipment is not open']);
         }
@@ -214,7 +315,7 @@ try {
             "UPDATE shipments SET po=?,customer_name=?,order_id=?,ship_date=? WHERE shipment_id=?",
             [trim((string)($input['po']??'')), trim((string)($input['customer_name']??'')),
              (int)($input['order_id']??0) ?: null, date('Y-m-d'), $sid]);
-        ps_out(ps_shipment_detail($dbx, $sid));
+        ps_out(ps_shipment_detail($dbx, $sid, $shipmentMeta, true));
     }
     if ($action === 'verify_skip_po_password') {
         $password = (string)($input['password'] ?? '');
@@ -237,25 +338,48 @@ try {
         $existing = smp_db_fetch_one($dbx,
             "SELECT id FROM shipment_pallets WHERE shipment_id=? AND pallet_id=? LIMIT 1", [$sid,$pid]);
         if ($existing) {
-            $detail = ps_shipment_detail($dbx, $sid);
+            $detail = ps_shipment_detail($dbx, $sid, $shipmentMeta, true);
             $detail['duplicate_ignored'] = 1;
             ps_out($detail);
         }
         $res = smp_tc26_add_pallet_to_shipment($dbx, $sid, $pid, $uid);
         if (empty($res['ok'])) ps_out($res);
-        ps_out(ps_shipment_detail($dbx, $sid));
+        $deviceId=(string)($shipmentMeta['device_id']??'');
+        if($deviceId!=='') smp_db_exec($dbx,"INSERT INTO tc26_shipment_pallet_devices(shipment_id,pallet_id,device_id) VALUES(?,?,?)
+            ON DUPLICATE KEY UPDATE device_id=VALUES(device_id),added_at=CURRENT_TIMESTAMP",[$sid,$pid,$deviceId]);
+        ps_out(ps_shipment_detail($dbx, $sid, $shipmentMeta, true));
     }
     if ($action === 'shipment_remove_last') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        $row = smp_db_fetch_one($dbx, "SELECT id FROM shipment_pallets WHERE shipment_id=? ORDER BY id DESC LIMIT 1", [$sid]);
-        if (!$row) ps_out(['ok'=>0, 'err'=>'No pallets to remove']);
+        $deviceId=(string)($shipmentMeta['device_id']??'');
+        $row=$deviceId!==''?smp_db_fetch_one($dbx,"SELECT sp.id,sp.pallet_id FROM shipment_pallets sp JOIN tc26_shipment_pallet_devices d ON d.shipment_id=sp.shipment_id AND d.pallet_id=sp.pallet_id WHERE sp.shipment_id=? AND d.device_id=? ORDER BY d.added_at DESC,sp.id DESC LIMIT 1",[$sid,$deviceId]):smp_db_fetch_one($dbx,"SELECT id,pallet_id FROM shipment_pallets WHERE shipment_id=? ORDER BY id DESC LIMIT 1",[$sid]);
+        if (!$row) ps_out(['ok'=>0, 'err'=>'No pallets added by this Zebra to remove']);
         $res = smp_tc26_remove_pallet_from_shipment($dbx, (int)$row['id'], $sid);
         if (empty($res['ok'])) ps_out($res);
-        ps_out(ps_shipment_detail($dbx, $sid));
+        smp_db_exec($dbx,"DELETE FROM tc26_shipment_pallet_devices WHERE shipment_id=? AND pallet_id=?",[$sid,(string)$row['pallet_id']]);
+        ps_out(ps_shipment_detail($dbx, $sid, $shipmentMeta, true));
+    }
+    if ($action === 'shipment_take_over') {
+        $sid=trim((string)($input['shipment_id']??''));
+        if($sid==='') ps_out(['ok'=>0,'err'=>'Missing shipment_id'],400);
+        if(!ps_shipment_takeover_password_valid($cfg,(string)($input['password']??''))) ps_out(['ok'=>0,'err'=>'Incorrect take-over password'],403);
+        $meta=ps_shipment_meta($input,$uid); $deviceId=trim((string)($meta['device_id']??''));
+        if($deviceId==='') ps_out(['ok'=>0,'err'=>'Device ID is required for take over'],400);
+        ps_shipment_touch($dbx,$sid,$meta);
+        smp_db_exec($dbx,"INSERT INTO tc26_shipment_takeovers(shipment_id,device_id,device_model,operator_id,operator_name)
+            VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE device_id=VALUES(device_id),device_model=VALUES(device_model),operator_id=VALUES(operator_id),operator_name=VALUES(operator_name),taken_over_at=CURRENT_TIMESTAMP",
+            [$sid,$deviceId,(string)($meta['device_model']??''),(int)($meta['operator_id']??0),(string)($meta['operator_name']??'')]);
+        $detail=ps_shipment_detail($dbx,$sid,$meta,true);$detail['takeover_completed']=1;ps_out($detail);
     }
     if ($action === 'shipment_close') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        ps_out(smp_tc26_close_shipment($dbx, $sid, $uid, 0));
+        $other=ps_shipment_other_devices($dbx,$sid,(string)($shipmentMeta['device_id']??''));
+        $takeover=ps_shipment_takeover_row($dbx,$sid);
+        $owns=$takeover&&(string)($shipmentMeta['device_id']??'')!==''&&hash_equals((string)$takeover['device_id'],(string)$shipmentMeta['device_id']);
+        if($other&&!$owns) ps_out(['ok'=>0,'err'=>'Another Zebra is active on this shipment. Use Take Over with the password before closing.','requires_take_over'=>1],409);
+        $result=smp_tc26_close_shipment($dbx, $sid, $uid, 0);
+        if(!empty($result['ok'])){smp_db_exec($dbx,"DELETE FROM tc26_shipment_takeovers WHERE shipment_id=?",[$sid]);smp_db_exec($dbx,"DELETE FROM tc26_shipment_device_sessions WHERE shipment_id=?",[$sid]);}
+        ps_out($result);
     }
 
     ps_out(['ok'=>0, 'err'=>'Unknown action'], 400);
