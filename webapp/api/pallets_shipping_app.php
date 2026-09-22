@@ -8,6 +8,7 @@ error_reporting(E_ALL);
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/print_engine.php';
 require_once __DIR__ . '/../includes/pallet_report.php';
+require_once __DIR__ . '/tc26_shipment_collaboration.php';
 
 ob_clean();
 header('Content-Type: application/json; charset=utf-8');
@@ -82,6 +83,7 @@ if (stripos((string)($_SERVER['CONTENT_TYPE'] ?? ''), 'application/json') !== fa
 }
 $action = trim((string)($input['action'] ?? ''));
 $uid = 0;
+$deviceId = tc26_collab_device_id($input);
 
 function ps_pallet_detail($db, string $pid): array {
     $st = smp_tc26_pallet_status($db, $pid);
@@ -110,6 +112,22 @@ function ps_shipment_detail($db, string $sid): array {
 }
 
 try {
+    if ($action === 'shipment_takeover') {
+        $sid = trim((string)($input['shipment_id'] ?? ''));
+        ps_out(tc26_collab_takeover($dbx, $cfg, $sid, $deviceId,
+            (string)($input['takeover_password'] ?? '')));
+    }
+
+    // Take Over protects shipment operations only. Pallet creation, scans and
+    // pallet closing deliberately remain available on every Zebra.
+    if (tc26_collab_mutation($action)) {
+        $sid = trim((string)($input['shipment_id'] ?? ''));
+        if ($blocked = tc26_collab_assert_available($dbx, $sid, $deviceId)) {
+            ps_out($blocked);
+        }
+        tc26_collab_touch($dbx, $sid, $deviceId);
+    }
+
     if ($action === 'ping') ps_out(['ok'=>1, 'api_version'=>'1.4.2', 'server_time'=>date(DATE_ATOM)]);
 
     if ($action === 'case_check') {
@@ -198,7 +216,7 @@ try {
 
     if ($action === 'shipment_new') {
         $sid = smp_tc26_open_shipment($dbx, $uid, '');
-        ps_out(ps_shipment_detail($dbx, $sid));
+        ps_out(tc26_collab_add_status($dbx, ps_shipment_detail($dbx, $sid), $sid, $deviceId));
     }
     if ($action === 'shipment_resume') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
@@ -206,7 +224,7 @@ try {
         if (!empty($st['ok']) && strtoupper((string)($st['status'] ?? '')) !== 'OPEN') {
             ps_out(['ok'=>0, 'err'=>'The scanned shipment is not open']);
         }
-        ps_out($st);
+        ps_out(tc26_collab_add_status($dbx, $st, $sid, $deviceId));
     }
     if ($action === 'shipment_set_order') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
@@ -214,7 +232,7 @@ try {
             "UPDATE shipments SET po=?,customer_name=?,order_id=?,ship_date=? WHERE shipment_id=?",
             [trim((string)($input['po']??'')), trim((string)($input['customer_name']??'')),
              (int)($input['order_id']??0) ?: null, date('Y-m-d'), $sid]);
-        ps_out(ps_shipment_detail($dbx, $sid));
+        ps_out(tc26_collab_add_status($dbx, ps_shipment_detail($dbx, $sid), $sid, $deviceId));
     }
     if ($action === 'verify_skip_po_password') {
         $password = (string)($input['password'] ?? '');
@@ -239,11 +257,11 @@ try {
         if ($existing) {
             $detail = ps_shipment_detail($dbx, $sid);
             $detail['duplicate_ignored'] = 1;
-            ps_out($detail);
+            ps_out(tc26_collab_add_status($dbx, $detail, $sid, $deviceId));
         }
         $res = smp_tc26_add_pallet_to_shipment($dbx, $sid, $pid, $uid);
         if (empty($res['ok'])) ps_out($res);
-        ps_out(ps_shipment_detail($dbx, $sid));
+        ps_out(tc26_collab_add_status($dbx, ps_shipment_detail($dbx, $sid), $sid, $deviceId));
     }
     if ($action === 'shipment_remove_last') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
@@ -251,11 +269,18 @@ try {
         if (!$row) ps_out(['ok'=>0, 'err'=>'No pallets to remove']);
         $res = smp_tc26_remove_pallet_from_shipment($dbx, (int)$row['id'], $sid);
         if (empty($res['ok'])) ps_out($res);
-        ps_out(ps_shipment_detail($dbx, $sid));
+        ps_out(tc26_collab_add_status($dbx, ps_shipment_detail($dbx, $sid), $sid, $deviceId));
     }
     if ($action === 'shipment_close') {
         $sid = trim((string)($input['shipment_id'] ?? ''));
-        ps_out(smp_tc26_close_shipment($dbx, $sid, $uid, 0));
+        $res = smp_tc26_close_shipment($dbx, $sid, $uid, 0);
+        if (!empty($res['ok']) && $deviceId !== '') {
+            tc26_collab_setup($dbx);
+            smp_db_exec($dbx,
+                "DELETE FROM tc26_shipment_takeovers WHERE shipment_id=? AND device_id=?",
+                [$sid, $deviceId]);
+        }
+        ps_out($res);
     }
 
     ps_out(['ok'=>0, 'err'=>'Unknown action'], 400);
