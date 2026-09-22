@@ -9,6 +9,7 @@ import android.media.AudioManager;
 import android.media.ToneGenerator;
 import android.net.*;
 import android.os.*;
+import android.provider.Settings;
 import android.text.InputType;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
@@ -30,6 +31,7 @@ public class MainActivity extends Activity {
                 SHIP_MODE, SHIP_RESUME, SHIP_ORDER, SHIP_SCAN, SHIP_FINISH, DONE }
     Step step = Step.HOME;
     boolean spanish = false, online = false, busy = false;
+    boolean shipmentTakenOver = false;
     String palletId = "", shipmentId = "";
     int caseCount = 0, palletCount = 0, shipmentCases = 0;
     JSONObject selectedOrder;
@@ -131,6 +133,7 @@ public class MainActivity extends Activity {
             case SHIP_FINISH: heading(tr("Review the shipment","Revise el envío"),shipmentId);
                 detail=tv((selectedOrder==null?tr("No PO selected","Sin PO"):selectedOrder.optString("po")+" · "+selectedOrder.optString("customer_name"))+"\n"+palletCount+" "+tr("pallets","pallets")+" · "+shipmentCases+" "+tr("cases","cajas"),18,Color.WHITE);body.addView(detail);
                 addSpace(18); choice("Save and Continue Later","Guardar y continuar después",v->done(tr("Shipment saved","Envío guardado")));
+                Button takeover=choice("Take Over Shipment","Tomar control del envío",v->takeOverShipment());takeover.setBackgroundColor(Color.rgb(180,83,9));
                 choice("Close Shipment","Cerrar envío",v->closeShipment()); break;
             case DONE: heading(tr("Completed","Terminado"),subtitle==null?"":subtitle.getText().toString());
                 choice("Back to Home","Volver al inicio",v->resetHome()); break;
@@ -240,7 +243,7 @@ public class MainActivity extends Activity {
             caseCount=0;scannedCases.clear();casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();
             ok(tr("Offline pallet created","Pallet sin conexión creado"));return;
         }
-        call(map("action","pallet_new"),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");scannedCases.clear();casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();});
+        call(map("action","pallet_new","force_new","1"),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");scannedCases.clear();casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();});
     }
     void resumePallet(String id){if(!online){error(tr("Connect to verify the partial pallet","Conéctese para verificar el pallet parcial"));return;}call(map("action","pallet_resume","pallet_id",id),j->{palletId=j.optString("pallet_id");caseCount=j.optInt("cases_count");loadCases(j);casesExpanded=false;scanErrorMessage="";step=Step.PALLET_SCAN;render();});}
     void requestPalletEditPassword(){
@@ -281,7 +284,8 @@ public class MainActivity extends Activity {
                 selectedOrder=new JSONObject();
                 try{selectedOrder.put("id",ship.optInt("order_id"));selectedOrder.put("po",ship.optString("po"));selectedOrder.put("customer_name",ship.optString("customer_name"));}catch(JSONException ignored){}
             }else selectedOrder=null;
-            shipmentSkuLines=new JSONArray();shipmentMismatch=false;shipmentCompareMessage="";step=Step.SHIP_SCAN;render();
+            shipmentSkuLines=new JSONArray();shipmentMismatch=false;shipmentCompareMessage="";shipmentTakenOver=j.optInt("takeover_by_this_device",0)==1;step=Step.SHIP_SCAN;render();
+            showShipmentPresence(j);
             if(selectedOrder!=null)checkPoAfterScan(false);
         });
     }
@@ -343,6 +347,24 @@ public class MainActivity extends Activity {
         call(map("action",cases?"pallet_remove_last":"shipment_remove_last",cases?"pallet_id":"shipment_id",cases?palletId:shipmentId),j->{if(cases){caseCount=j.optInt("cases_count");if(!scannedCases.isEmpty())scannedCases.remove(scannedCases.size()-1);scanErrorMessage="";}else{palletCount=j.optInt("pallet_count");shipmentCases=j.optInt("cases_count");shipmentMismatch=false;shipmentCompareMessage="";}render();if(!cases&&selectedOrder!=null)checkPoAfterScan();});
     }
     void finishPallet(boolean complete){ if(!online||queue.countFor(palletId)>0){error(tr("Wait for synchronization before finishing","Espere la sincronización antes de finalizar"));return;}call(map("action",complete?"pallet_close":"pallet_partial","pallet_id",palletId),j->{if(j.optInt("label_printed",0)!=1){error(tr("Pallet saved, but the label was not sent. Check the printer selected in Pallets Manage.","Pallet guardado, pero la etiqueta no fue enviada. Compruebe la impresora seleccionada en Pallets Manage."));return;}done(complete?tr("Pallet closed as complete and sent to print","Pallet cerrado como completo y enviado a imprimir"):tr("Pallet closed as partial and sent to print","Pallet cerrado como parcial y enviado a imprimir"));}); }
+    void takeOverShipment(){
+        if(!online){error(tr("Connect to take over a shipment","Conéctese para tomar control del envío"));return;}
+        final EditText input=new EditText(this);input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        new AlertDialog.Builder(this).setTitle(tr("Take Over Shipment","Tomar control del envío"))
+            .setMessage(tr("This temporarily blocks shipment actions on the other Zebra devices. It does not block palletizing.","Esto bloquea temporalmente las acciones del envío en los otros Zebra. No bloquea la paletización."))
+            .setView(input).setPositiveButton(tr("Take Over","Tomar control"),(d,w)->{
+                call(map("action","shipment_take_over","shipment_id",shipmentId,"password",input.getText().toString()),j->{
+                    shipmentTakenOver=true;ok(tr("Shipment taken over","Control del envío asumido"));render();
+                });
+            }).setNegativeButton(tr("Cancel","Cancelar"),null).show();
+    }
+    void showShipmentPresence(JSONObject j){
+        if(j.optInt("shipment_in_progress_elsewhere",0)!=1)return;
+        String msg=j.optString("other_devices_message",tr("Shipment already in progress on another Zebra. You can continue; your pallets and scans remain private.","El envío ya está en curso en otro Zebra. Puede continuar; sus pallets y lecturas siguen siendo privados."));
+        new AlertDialog.Builder(this).setTitle(tr("Shipment in progress","Envío en curso")).setMessage(msg)
+            .setPositiveButton("OK",null).show();
+    }
+
     void closeShipment(){
         if(!online||queue.countFor(shipmentId)>0){error(tr("Wait for synchronization before closing","Espere la sincronización antes de cerrar"));return;}
         if(palletCount<=0){error(tr("Scan at least one pallet","Escanee al menos un pallet"));return;}
@@ -458,12 +480,22 @@ public class MainActivity extends Activity {
         return requestUrl(BuildConfig.API_URL,data);
     }
     JSONObject requestUrl(String url,Map<String,String> data)throws Exception{
+        if(url.equals(BuildConfig.API_URL))addClientMeta(data);
         StringBuilder body=new StringBuilder();for(Map.Entry<String,String>e:data.entrySet()){if(body.length()>0)body.append('&');body.append(URLEncoder.encode(e.getKey(),"UTF-8")).append('=').append(URLEncoder.encode(e.getValue(),"UTF-8"));}
         HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();c.setConnectTimeout(3000);c.setReadTimeout(7000);c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("X-App-Token",BuildConfig.APP_TOKEN);c.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");try(OutputStream o=c.getOutputStream()){o.write(body.toString().getBytes(StandardCharsets.UTF_8));}
         InputStream in=c.getResponseCode()<400?c.getInputStream():c.getErrorStream();String s=read(in);return new JSONObject(s);
     }
     String read(InputStream in)throws IOException{ByteArrayOutputStream o=new ByteArrayOutputStream();byte[]b=new byte[4096];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString("UTF-8");}
     String localizeError(String e){if(!spanish)return e;String l=e.toLowerCase();if(l.contains("already belongs"))return "La caja ya pertenece a otro pallet";if(l.contains("already scanned"))return "La caja ya fue escaneada";if(l.contains("not found"))return "Código no encontrado";if(l.contains("already in this shipment"))return "El pallet ya está en este envío";if(l.contains("not partial"))return "El pallet escaneado no es parcial";return e;}
+
+    void addClientMeta(Map<String,String> data){
+        String id=Settings.Secure.getString(getContentResolver(),Settings.Secure.ANDROID_ID);
+        if(id==null||id.trim().isEmpty())id=Build.MANUFACTURER+"-"+Build.MODEL;
+        data.put("device_id",id);
+        data.put("device_model",(Build.MANUFACTURER+" "+Build.MODEL).trim());
+        data.put("app_version",BuildConfig.VERSION_NAME);
+        data.put("private_device_view","1");
+    }
 
     void ok(String s){tone.startTone(ToneGenerator.TONE_PROP_ACK,140);Toast.makeText(this,"✓ "+s,Toast.LENGTH_SHORT).show();}
     void showDuplicateCase(){scanErrorMessage=tr("CASE ALREADY SCANNED","CAJA YA ESCANEADA");tone.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT,180);healthHandler.postDelayed(()->tone.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT,280),260);render();}
