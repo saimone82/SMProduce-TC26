@@ -26,6 +26,7 @@ jobs:
           cp "$BUILD_TOOLS/d8" toolpack/
           cp "$BUILD_TOOLS/apksigner" toolpack/
           cp "$BUILD_TOOLS/zipalign" toolpack/
+          find "$BUILD_TOOLS" -name 'libc++.so' -type f -print -quit | xargs -r -I{} cp "{}" toolpack/libc++.so
           mkdir -p toolpack/lib
           cp "$BUILD_TOOLS/lib/d8.jar" toolpack/lib/
           cp "$BUILD_TOOLS/lib/apksigner.jar" toolpack/lib/
