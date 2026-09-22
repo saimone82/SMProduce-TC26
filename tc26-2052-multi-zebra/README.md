@@ -6,10 +6,10 @@ It preserves `classes.dex` through `classes7.dex` byte-for-byte and adds only
 
 It sends a persistent per-Zebra `client_device_id` with each request and:
 
-- shows an informational message when another Zebra is active on the same shipment;
-- keeps each Zebra's pallet session independent;
-- offers **Take Over Shipment** with password;
-- blocks only shipment operations on the other Zebras after Take Over;
+- lets only one Zebra open a shipment at a time;
+- shows **Shipment already open** on every other Zebra;
+- offers **Take Over Shipment** only after the operator enters password `2424`;
+- keeps every Zebra's pallet session independent at all times;
 - never blocks pallet creation, pallet scans, or pallet closing.
 
 The paired server implementation is in:
