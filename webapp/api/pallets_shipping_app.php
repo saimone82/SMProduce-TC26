@@ -118,7 +118,7 @@ try {
             (string)($input['takeover_password'] ?? '')));
     }
 
-    if ($action === 'ping') ps_out(['ok'=>1, 'api_version'=>'1.4.2', 'server_time'=>date(DATE_ATOM)]);
+    if ($action === 'ping') ps_out(['ok'=>1, 'api_version'=>'1.4.3', 'server_time'=>date(DATE_ATOM)]);
 
     if ($action === 'case_check') {
         $serial = ps_normalize_scan_code((string)($input['case_serial'] ?? ''));
@@ -256,12 +256,37 @@ try {
         ps_out($valid ? ['ok'=>1] : ['ok'=>0, 'err'=>'Incorrect password']);
     }
     if ($action === 'order_search') {
+        /*
+         * The handheld must use the exact operational Orders visibility rule.
+         * An iTrade PO marked blocked is retained for Restore/audit, but never
+         * appears in Orders or in the APK shipment picker.
+         */
         $q = '%'.trim((string)($input['q'] ?? '')).'%';
+        $excluded = '';
+        try {
+            $hasInbox = smp_db_fetch_one($dbx,
+                "SELECT 1 AS present FROM information_schema.tables
+                  WHERE table_schema=DATABASE() AND table_name='itrade_inbox_orders' LIMIT 1");
+            if ($hasInbox) {
+                $excluded = " AND NOT EXISTS (
+                    SELECT 1 FROM itrade_inbox_orders excluded_po
+                     WHERE COALESCE(excluded_po.blocked,0)=1
+                       AND (excluded_po.order_id=orders.id OR (
+                            NULLIF(TRIM(excluded_po.po),'') IS NOT NULL
+                        AND UPPER(TRIM(excluded_po.po))=UPPER(TRIM(COALESCE(orders.po,'')))
+                       ))
+                )";
+            }
+        } catch (Throwable $ignored) {
+            // Preserve normal Orders visibility if an old DB has no iTrade table.
+        }
         $rows = smp_db_fetch_all($dbx,
-            "SELECT id,po,COALESCE(customer,'') customer_name,status
-             FROM orders WHERE UPPER(COALESCE(status,'OPEN'))='OPEN'
-               AND (po LIKE ? OR COALESCE(customer,'') LIKE ?)
-             ORDER BY id DESC LIMIT 50", [$q,$q]);
+            "SELECT orders.id,orders.po,COALESCE(orders.customer,'') customer_name,orders.status
+               FROM orders
+              WHERE UPPER(COALESCE(orders.status,'OPEN'))='OPEN'
+                {$excluded}
+                AND (orders.po LIKE ? OR COALESCE(orders.customer,'') LIKE ?)
+              ORDER BY orders.id DESC LIMIT 50", [$q,$q]);
         ps_out(['ok'=>1, 'orders'=>$rows]);
     }
     if ($action === 'shipment_scan_pallet') {
