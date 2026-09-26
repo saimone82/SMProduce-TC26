@@ -1,0 +1,28 @@
+name: Export Android APK Tools
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ apk-2-0-59-po-ui ]
+    paths:
+      - '.github/workflows/export-android-tools.yml'
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - name: Collect tools
+        run: |
+          set -eux
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "Using $BT"
+          mkdir -p apk-tools/lib
+          cp "$BT/apksigner" apk-tools/
+          cp "$BT/zipalign" apk-tools/
+          cp "$BT/lib/apksigner.jar" apk-tools/lib/
+          chmod +x apk-tools/apksigner apk-tools/zipalign
+          file apk-tools/zipalign || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-tools
+          path: apk-tools
