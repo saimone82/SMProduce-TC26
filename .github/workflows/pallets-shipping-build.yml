@@ -1,5 +1,7 @@
 name: Build Pallets Shipping APK
 on: { workflow_dispatch: {}, push: { branches: [ main ] } }
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,3 +16,15 @@ jobs:
         with:
           name: Pallets-Shipping-APK
           path: pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish direct APK
+        run: |
+          mkdir -p downloads
+          cp pallets-shipping-android/app/build/outputs/apk/debug/app-debug.apk downloads/SMProduce-Pallet-Shipping-latest.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add downloads/SMProduce-Pallet-Shipping-latest.apk
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Publish latest Pallets Shipping APK [skip ci]"
+          git push
