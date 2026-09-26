@@ -18,12 +18,25 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - run: gradle -p overlay-2.0.59 :app:assembleDebug
-      - name: Extract overlay dex
+      - run: gradle -p overlay-2.0.59 :app:compileDebugJavaWithJavac :stubs:bundleLibCompileToJarDebug
+      - name: Build overlay dex only
         run: |
-          mkdir -p overlay-output
-          unzip -j overlay-2.0.59/app/build/outputs/apk/debug/app-debug.apk classes.dex -d overlay-output
-          mv overlay-output/classes.dex overlay-output/classes9.dex
+          set -eux
+          CLASSROOT="overlay-2.0.59/app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes"
+          find "$CLASSROOT/com/smproduce/palletsshipping" -type f -maxdepth 1 -print
+          mkdir -p overlay-output/jarroot/com/smproduce/palletsshipping
+          cp "$CLASSROOT"/com/smproduce/palletsshipping/Recovery53MultiActivity*.class overlay-output/jarroot/com/smproduce/palletsshipping/
+          (cd overlay-output/jarroot && jar cf ../overlay.jar com/smproduce/palletsshipping)
+          STUBJAR=$(find overlay-2.0.59/stubs/build/intermediates -name classes.jar | head -1)
+          ANDROIDJAR="$ANDROID_HOME/platforms/android-35/android.jar"
+          D8=$(find "$ANDROID_HOME/build-tools" -type f -name d8 | sort -V | tail -1)
+          echo "stub=$STUBJAR"
+          echo "d8=$D8"
+          mkdir -p overlay-output/dex
+          "$D8" --min-api 26 --lib "$ANDROIDJAR" --lib "$STUBJAR" --output overlay-output/dex overlay-output/overlay.jar
+          mv overlay-output/dex/classes.dex overlay-output/classes9.dex
+          ls -l overlay-output/classes9.dex
+          strings overlay-output/classes9.dex | grep -E 'Recovery53|Select one or more POs|Any combination'
       - uses: actions/upload-artifact@v4
         with:
           name: SMProduce-2.0.59-PO-Overlay
