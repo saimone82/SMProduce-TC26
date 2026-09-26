@@ -137,6 +137,46 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
         return row;
     }
 
+    private boolean visibleLine(JSONObject line) {
+        if (line == null) return false;
+        if (line.optInt("quantity", line.optInt("required", 0)) > 0) return true;
+        if (!line.optString("variety_display", "").trim().isEmpty()) return true;
+        if (!line.optString("size_display", "").trim().isEmpty()) return true;
+        if (!line.optString("sku_display", "").trim().isEmpty()) return true;
+        JSONArray members = line.optJSONArray("allowed_skus");
+        return members != null && members.length() > 0;
+    }
+
+    private int visibleLineCount(JSONArray lines) {
+        int count = 0;
+        if (lines == null) return 0;
+        for (int i = 0; i < lines.length(); i++) {
+            if (visibleLine(lines.optJSONObject(i))) count++;
+        }
+        return count;
+    }
+
+    private String compactOrLine(JSONObject line) {
+        String varietyDisplay = line.optString("variety_display", "").trim();
+        String sizeDisplay = line.optString("size_display", "").trim();
+        String packagingDisplay = line.optString("packaging_display", "").trim();
+
+        if (!varietyDisplay.isEmpty() && !sizeDisplay.isEmpty()) {
+            String sizes = sizeDisplay.replace(" / ", "/").replace(" /", "/").replace("/ ", "/");
+            StringBuilder out = new StringBuilder(varietyDisplay).append(" ").append(sizes);
+            if (!packagingDisplay.isEmpty()) out.append(" · ").append(packagingDisplay);
+            return out.toString();
+        }
+
+        JSONArray members = line.optJSONArray("allowed_skus");
+        String compact = compactOrMembers(members);
+        if (!compact.isEmpty()) return compact;
+
+        String description = line.optString("description_display", "").trim();
+        if (!description.isEmpty()) return description.replace(" | ", " ");
+        return line.optString("sku_display", "").trim();
+    }
+
     private LinearLayout buildPoDetails(JSONObject order) {
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
@@ -150,11 +190,11 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             return wrap;
         }
 
-        boolean singleLine = lines.length() == 1;
+        boolean singleLine = visibleLineCount(lines) <= 1;
 
         for (int i = 0; i < lines.length(); i++) {
             JSONObject line = lines.optJSONObject(i);
-            if (line == null) continue;
+            if (line == null || !visibleLine(line)) continue;
 
             boolean isOr = line.optInt("is_mix", 0) == 1
                     || "OR".equalsIgnoreCase(line.optString("line_type", ""));
@@ -188,8 +228,8 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             JSONArray members = line.optJSONArray("allowed_skus");
             boolean added = false;
 
-            if (isOr && members != null && members.length() > 0) {
-                String compact = compactOrMembers(members);
+            if (isOr) {
+                String compact = compactOrLine(line);
                 if (!compact.isEmpty()) {
                     LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2);
                     rp.setMargins(0, dp2(6), 0, 0);
