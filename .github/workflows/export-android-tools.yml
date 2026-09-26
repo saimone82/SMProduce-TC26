@@ -10,18 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: android-actions/setup-android@v3
       - name: Collect tools
         run: |
           set -eux
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f \( -name apksigner -o -name zipalign -o -name apksigner.jar \) -print
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           echo "Using $BT"
           mkdir -p apk-tools/lib
           cp "$BT/apksigner" apk-tools/
           cp "$BT/zipalign" apk-tools/
           cp "$BT/lib/apksigner.jar" apk-tools/lib/
           chmod +x apk-tools/apksigner apk-tools/zipalign
-          file apk-tools/zipalign || true
+          file apk-tools/zipalign
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk-tools
