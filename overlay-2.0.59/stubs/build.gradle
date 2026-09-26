@@ -1,0 +1,6 @@
+plugins { id 'com.android.library' }
+android {
+    namespace 'com.smproduce.palletsshipping.stub'
+    compileSdk 35
+    defaultConfig { minSdk 26 }
+}
