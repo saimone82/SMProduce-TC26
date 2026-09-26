@@ -61,25 +61,77 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
 
     private String productLabel(JSONObject member) {
         if (member == null) return "";
-        String sku = member.optString("sku", member.optString("sku_code", ""));
-        String variety = member.optString("variety", "");
-        String size = member.optString("size", "");
-        String packaging = member.optString("packaging", member.optString("packaging_preset", ""));
+        String variety = member.optString("variety", "").trim();
+        String size = member.optString("size", "").trim();
+        String packaging = member.optString("packaging", member.optString("packaging_preset", "")).trim();
+
         StringBuilder out = new StringBuilder();
         if (!variety.isEmpty()) out.append(variety);
-        if (!size.isEmpty()) out.append(out.length() > 0 ? " · " : "").append(size);
+        if (!size.isEmpty()) out.append(out.length() > 0 ? " " : "").append(size);
         if (!packaging.isEmpty()) out.append(out.length() > 0 ? " · " : "").append(packaging);
-        if (out.length() == 0 && !sku.isEmpty()) out.append("SKU ").append(sku);
-        if (!sku.isEmpty() && out.indexOf(sku) < 0) out.append("\nSKU ").append(sku);
-        return out.toString();
+        return out.toString().trim();
+    }
+
+    private String compactOrMembers(JSONArray members) {
+        if (members == null || members.length() == 0) return "";
+
+        String commonVariety = "";
+        String commonPackaging = "";
+        ArrayList<String> sizes = new ArrayList<>();
+        ArrayList<String> fallback = new ArrayList<>();
+
+        for (int i = 0; i < members.length(); i++) {
+            JSONObject m = members.optJSONObject(i);
+            if (m == null) {
+                String raw = members.optString(i, "").trim();
+                if (!raw.isEmpty()) fallback.add(raw);
+                continue;
+            }
+
+            String variety = m.optString("variety", "").trim();
+            String size = m.optString("size", "").trim();
+            String packaging = m.optString("packaging", m.optString("packaging_preset", "")).trim();
+
+            if (i == 0) {
+                commonVariety = variety;
+                commonPackaging = packaging;
+            } else {
+                if (!commonVariety.equalsIgnoreCase(variety)) commonVariety = "";
+                if (!commonPackaging.equalsIgnoreCase(packaging)) commonPackaging = "";
+            }
+
+            if (!size.isEmpty() && !sizes.contains(size)) sizes.add(size);
+            String full = productLabel(m);
+            if (!full.isEmpty()) fallback.add(full);
+        }
+
+        if (!commonVariety.isEmpty() && !sizes.isEmpty()) {
+            StringBuilder out = new StringBuilder(commonVariety).append(" ");
+            for (int i = 0; i < sizes.size(); i++) {
+                if (i > 0) out.append("/");
+                out.append(sizes.get(i));
+            }
+            if (!commonPackaging.isEmpty()) out.append(" · ").append(commonPackaging);
+            return out.toString();
+        }
+
+        if (!fallback.isEmpty()) {
+            StringBuilder out = new StringBuilder();
+            for (int i = 0; i < fallback.size(); i++) {
+                if (i > 0) out.append(" / ");
+                out.append(fallback.get(i));
+            }
+            return out.toString();
+        }
+        return "";
     }
 
     private LinearLayout productRow(String text) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp2(10), dp2(7), dp2(10), dp2(7));
+        row.setPadding(dp2(10), dp2(8), dp2(10), dp2(8));
         row.setBackgroundColor(Color.rgb(31, 45, 63));
-        TextView t = label(text, 15, Color.WHITE);
+        TextView t = label(text, 16, Color.WHITE);
         t.setTypeface(null, 1);
         row.addView(t, new LinearLayout.LayoutParams(-1, -2));
         return row;
@@ -98,6 +150,8 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             return wrap;
         }
 
+        boolean singleLine = lines.length() == 1;
+
         for (int i = 0; i < lines.length(); i++) {
             JSONObject line = lines.optJSONObject(i);
             if (line == null) continue;
@@ -109,16 +163,20 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             LinearLayout group = new LinearLayout(this);
             group.setOrientation(LinearLayout.VERTICAL);
             group.setPadding(dp2(12), dp2(10), dp2(12), dp2(10));
-            group.setBackgroundColor(isOr ? Color.rgb(68, 45, 105) : Color.rgb(24, 72, 88));
+            group.setBackgroundColor(Color.rgb(24, 50, 66));
 
             LinearLayout head = new LinearLayout(this);
             head.setGravity(Gravity.CENTER_VERTICAL);
 
-            TextView rule = label(isOr ? "OR" : "AND", 16, Color.WHITE);
-            rule.setTypeface(null, 1);
-            rule.setGravity(Gravity.CENTER);
-            rule.setBackgroundColor(isOr ? Color.rgb(109, 40, 217) : Color.rgb(3, 105, 161));
-            head.addView(rule, new LinearLayout.LayoutParams(dp2(66), dp2(40)));
+            // AND is useful only when the PO contains multiple required lines.
+            // OR is never shown as a badge: its alternatives are compacted into one product line.
+            if (!isOr && !singleLine) {
+                TextView rule = label("AND", 14, Color.WHITE);
+                rule.setTypeface(null, 1);
+                rule.setGravity(Gravity.CENTER);
+                rule.setBackgroundColor(Color.rgb(3, 105, 161));
+                head.addView(rule, new LinearLayout.LayoutParams(dp2(60), dp2(36)));
+            }
 
             TextView q = label(qty + " CASES", 17, Color.WHITE);
             q.setTypeface(null, 1);
@@ -127,37 +185,35 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             head.addView(q, new LinearLayout.LayoutParams(0, dp2(40), 1));
             group.addView(head, new LinearLayout.LayoutParams(-1, -2));
 
-            TextView meaning = label(
-                    isOr ? "Any combination below can complete this line" : "This line is required",
-                    13, Color.rgb(203, 213, 225));
-            meaning.setPadding(0, dp2(5), 0, dp2(5));
-            group.addView(meaning, new LinearLayout.LayoutParams(-1, -2));
-
             JSONArray members = line.optJSONArray("allowed_skus");
             boolean added = false;
-            if (members != null) {
-                for (int m = 0; m < members.length(); m++) {
-                    String txt = "";
-                    JSONObject member = members.optJSONObject(m);
-                    if (member != null) {
-                        txt = productLabel(member);
-                    } else {
-                        txt = members.optString(m, "");
-                    }
-                    if (txt.trim().isEmpty()) continue;
+
+            if (isOr && members != null && members.length() > 0) {
+                String compact = compactOrMembers(members);
+                if (!compact.isEmpty()) {
                     LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2);
-                    rp.setMargins(0, dp2(5), 0, 0);
+                    rp.setMargins(0, dp2(6), 0, 0);
+                    group.addView(productRow(compact), rp);
+                    added = true;
+                }
+            } else if (members != null && members.length() > 0) {
+                for (int m = 0; m < members.length(); m++) {
+                    JSONObject member = members.optJSONObject(m);
+                    String txt = member != null ? productLabel(member) : members.optString(m, "").trim();
+                    if (txt.isEmpty()) continue;
+                    LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2);
+                    rp.setMargins(0, dp2(6), 0, 0);
                     group.addView(productRow(txt), rp);
                     added = true;
                 }
             }
 
             if (!added) {
-                String display = line.optString("sku_display", "");
-                if (display.isEmpty()) display = line.optString("product_name", "");
+                String display = line.optString("sku_display", "").trim();
+                if (display.isEmpty()) display = line.optString("product_name", "").trim();
                 if (display.isEmpty()) display = "Product not specified";
                 LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2);
-                rp.setMargins(0, dp2(5), 0, 0);
+                rp.setMargins(0, dp2(6), 0, 0);
                 group.addView(productRow(display), rp);
             }
 
@@ -370,20 +426,10 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             TextView customer = label(order.optString("customer_name"), 15, Color.rgb(226, 232, 240));
             info.addView(customer);
 
-            JSONArray lines = order.optJSONArray("lines");
-            int lineCount = order.optInt("line_count", lines == null ? 0 : lines.length());
             int totalCases = order.optInt("total_cases", 0);
-            String summary = lineCount + (lineCount == 1 ? " line" : " lines");
-            if (totalCases > 0) summary += " · " + totalCases + " cases";
-            TextView meta = label(summary, 14, Color.rgb(148, 163, 184));
-            info.addView(meta);
-
-            if (order.optInt("has_mix", 0) == 1) {
-                TextView orBadge = label("OR", 12, Color.WHITE);
-                orBadge.setTypeface(null, 1);
-                orBadge.setGravity(Gravity.CENTER);
-                orBadge.setBackgroundColor(Color.rgb(109, 40, 217));
-                info.addView(orBadge, new LinearLayout.LayoutParams(dp2(46), dp2(28)));
+            if (totalCases > 0) {
+                TextView meta = label(totalCases + " cases", 14, Color.rgb(148, 163, 184));
+                info.addView(meta);
             }
 
             top.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
