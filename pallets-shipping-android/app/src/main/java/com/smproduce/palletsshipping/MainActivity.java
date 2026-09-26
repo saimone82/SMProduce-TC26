@@ -429,46 +429,109 @@ public class MainActivity extends Activity {
         if(!duringScan&&!cmp.optBoolean("all_ok",false)&&issues.isEmpty())shipmentCompareMessage=tr("Order incomplete · Remaining cases: ","Pedido incompleto · Cajas restantes: ")+remaining;
         return dangerous;
     }
-    String poPreviewDetails(JSONObject order){
+    String poMemberLabel(JSONObject member){
+        String sku=member.optString("sku");
+        String variety=member.optString("variety");
+        String size=member.optString("size");
+        String packaging=member.optString("packaging");
+        StringBuilder label=new StringBuilder();
+        if(!variety.isEmpty())label.append(variety);
+        if(!size.isEmpty())label.append(label.length()>0?" · ":"").append(size);
+        if(!packaging.isEmpty())label.append(label.length()>0?" · ":"").append(packaging);
+        if(label.length()==0&&!sku.isEmpty())label.append("SKU ").append(sku);
+        if(!sku.isEmpty()&&!label.toString().contains(sku))label.append("\nSKU ").append(sku);
+        return label.toString();
+    }
+
+    LinearLayout buildPoPreviewView(JSONObject order){
+        LinearLayout wrap=new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setPadding(dp(8),dp(10),dp(8),dp(8));
+        wrap.setBackgroundColor(Color.rgb(15,30,45));
+
         JSONArray lines=order.optJSONArray("lines");
-        if(lines==null||lines.length()==0)return tr("No product details available","Sin detalle de productos");
-        StringBuilder out=new StringBuilder();
+        if(lines==null||lines.length()==0){
+            TextView empty=tv(tr("No product details available","Sin detalle de productos"),15,Color.LTGRAY);
+            wrap.addView(empty,new LinearLayout.LayoutParams(-1,-2));
+            return wrap;
+        }
+
         for(int i=0;i<lines.length();i++){
             JSONObject line=lines.optJSONObject(i);if(line==null)continue;
             int qty=line.optInt("quantity",0);
             boolean isMix=line.optInt("is_mix",0)==1;
-            if(out.length()>0)out.append("\n\n");
-            out.append(isMix?"OR":"AND").append("  ·  ").append(qty).append(" ").append(tr("cases","cajas"));
+
+            LinearLayout group=new LinearLayout(this);
+            group.setOrientation(LinearLayout.VERTICAL);
+            group.setPadding(dp(12),dp(10),dp(12),dp(10));
+            group.setBackgroundColor(isMix?Color.rgb(68,45,105):Color.rgb(24,72,88));
+
+            LinearLayout head=new LinearLayout(this);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+
+            TextView rule=tv(isMix?"OR":"AND",16,Color.WHITE);
+            rule.setTypeface(null,1);
+            rule.setGravity(Gravity.CENTER);
+            rule.setBackgroundColor(isMix?Color.rgb(109,40,217):Color.rgb(3,105,161));
+            LinearLayout.LayoutParams ruleLp=new LinearLayout.LayoutParams(dp(66),dp(40));
+            head.addView(rule,ruleLp);
+
+            TextView qtyView=tv(qty+" "+tr("CASES","CAJAS"),17,Color.WHITE);
+            qtyView.setTypeface(null,1);
+            qtyView.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+            qtyView.setPadding(dp(8),0,0,0);
+            head.addView(qtyView,new LinearLayout.LayoutParams(0,dp(40),1));
+
+            group.addView(head,new LinearLayout.LayoutParams(-1,-2));
+
+            TextView meaning=tv(
+                isMix?tr("Any combination below can complete this line","Cualquier combinación puede completar esta línea")
+                     :tr("This line is required","Esta línea es obligatoria"),
+                13,Color.rgb(203,213,225));
+            meaning.setPadding(0,dp(6),0,dp(6));
+            group.addView(meaning,new LinearLayout.LayoutParams(-1,-2));
+
             JSONArray members=line.optJSONArray("allowed_skus");
             if(members!=null&&members.length()>0){
                 for(int m=0;m<members.length();m++){
                     JSONObject member=members.optJSONObject(m);if(member==null)continue;
-                    String sku=member.optString("sku");
-                    String variety=member.optString("variety");
-                    String size=member.optString("size");
-                    String packaging=member.optString("packaging");
-                    StringBuilder label=new StringBuilder();
-                    if(!variety.isEmpty())label.append(variety);
-                    if(!size.isEmpty())label.append(label.length()>0?" · ":"").append(size);
-                    if(!packaging.isEmpty())label.append(label.length()>0?" · ":"").append(packaging);
-                    if(label.length()==0)label.append("SKU ").append(sku);
-                    out.append("\n  • ").append(label);
-                    if(!sku.isEmpty()&&!label.toString().contains(sku))out.append("  [").append(sku).append("]");
+                    LinearLayout productRow=new LinearLayout(this);
+                    productRow.setOrientation(LinearLayout.VERTICAL);
+                    productRow.setPadding(dp(10),dp(8),dp(10),dp(8));
+                    productRow.setBackgroundColor(Color.rgb(31,45,63));
+                    TextView product=tv(poMemberLabel(member),15,Color.WHITE);
+                    product.setTypeface(null,1);
+                    productRow.addView(product,new LinearLayout.LayoutParams(-1,-2));
+                    LinearLayout.LayoutParams prLp=new LinearLayout.LayoutParams(-1,-2);
+                    prLp.setMargins(0,dp(5),0,0);
+                    group.addView(productRow,prLp);
                 }
             }else{
                 String display=line.optString("sku_display");
-                if(!display.isEmpty())out.append("\n  • ").append(display);
+                if(display.isEmpty())display=tr("Product not specified","Producto no especificado");
+                LinearLayout productRow=new LinearLayout(this);
+                productRow.setOrientation(LinearLayout.VERTICAL);
+                productRow.setPadding(dp(10),dp(8),dp(10),dp(8));
+                productRow.setBackgroundColor(Color.rgb(31,45,63));
+                TextView product=tv(display,15,Color.WHITE);product.setTypeface(null,1);
+                productRow.addView(product,new LinearLayout.LayoutParams(-1,-2));
+                LinearLayout.LayoutParams prLp=new LinearLayout.LayoutParams(-1,-2);
+                prLp.setMargins(0,dp(5),0,0);
+                group.addView(productRow,prLp);
             }
+
+            LinearLayout.LayoutParams groupLp=new LinearLayout.LayoutParams(-1,-2);
+            groupLp.setMargins(0,0,0,dp(10));
+            wrap.addView(group,groupLp);
         }
-        return out.toString();
+        return wrap;
     }
 
     void showOrders(JSONArray a){
         if(a==null||a.length()==0){error(tr("No open orders found","No se encontraron pedidos abiertos"));return;}
 
         boolean[] checked=new boolean[a.length()];
-        ArrayList<CheckBox> boxes=new ArrayList<>();
-        ArrayList<TextView> details=new ArrayList<>();
+        ArrayList<View> details=new ArrayList<>();
         ArrayList<Button> toggles=new ArrayList<>();
 
         LinearLayout list=new LinearLayout(this);
@@ -487,7 +550,7 @@ public class MainActivity extends Activity {
             card.setPadding(dp(12),dp(10),dp(12),dp(10));
             card.setBackgroundColor(Color.rgb(31,45,63));
             LinearLayout.LayoutParams cardLp=new LinearLayout.LayoutParams(-1,-2);
-            cardLp.setMargins(0,0,0,dp(10));
+            cardLp.setMargins(0,0,0,dp(12));
 
             LinearLayout top=new LinearLayout(this);
             top.setGravity(Gravity.CENTER_VERTICAL);
@@ -495,8 +558,7 @@ public class MainActivity extends Activity {
             CheckBox cb=new CheckBox(this);
             cb.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(33,150,243)));
             cb.setOnCheckedChangeListener((buttonView,isChecked)->checked[index]=isChecked);
-            boxes.add(cb);
-            top.addView(cb,new LinearLayout.LayoutParams(dp(48),dp(52)));
+            top.addView(cb,new LinearLayout.LayoutParams(dp(48),dp(58)));
 
             LinearLayout info=new LinearLayout(this);
             info.setOrientation(LinearLayout.VERTICAL);
@@ -504,26 +566,33 @@ public class MainActivity extends Activity {
             String customer=o.optString("customer_name");
             int totalCases=o.optInt("total_cases",0);
             int lineCount=o.optInt("line_count",0);
-            TextView poText=tv("PO "+po,18,Color.WHITE);poText.setTypeface(null,1);info.addView(poText);
-            TextView customerText=tv(customer,15,Color.rgb(203,213,225));info.addView(customerText);
+
+            TextView poText=tv("PO "+po,19,Color.WHITE);poText.setTypeface(null,1);info.addView(poText);
+            TextView customerText=tv(customer,15,Color.rgb(226,232,240));info.addView(customerText);
+
             String summary=lineCount+" "+tr(lineCount==1?"line":"lines",lineCount==1?"línea":"líneas");
             if(totalCases>0)summary+=" · "+totalCases+" "+tr("cases","cajas");
-            if(o.optInt("has_mix",0)==1)summary+=" · OR";
             TextView meta=tv(summary,14,Color.rgb(148,163,184));info.addView(meta);
+            if(o.optInt("has_mix",0)==1){
+                TextView mix=tv("OR",12,Color.WHITE);mix.setTypeface(null,1);mix.setGravity(Gravity.CENTER);
+                mix.setBackgroundColor(Color.rgb(109,40,217));
+                LinearLayout.LayoutParams mixLp=new LinearLayout.LayoutParams(dp(46),dp(28));
+                info.addView(mix,mixLp);
+            }
             top.addView(info,new LinearLayout.LayoutParams(0,-2,1));
 
             Button toggle=button("▼",Color.rgb(52,65,85));
             toggle.setTextSize(18);
-            top.addView(toggle,new LinearLayout.LayoutParams(dp(56),dp(48)));
+            top.addView(toggle,new LinearLayout.LayoutParams(dp(56),dp(52)));
             toggles.add(toggle);
 
             card.addView(top,new LinearLayout.LayoutParams(-1,-2));
 
-            TextView detailView=tv(poPreviewDetails(o),15,Color.WHITE);
-            detailView.setPadding(dp(10),dp(10),dp(10),dp(8));
-            detailView.setBackgroundColor(Color.rgb(15,30,45));
+            LinearLayout detailView=buildPoPreviewView(o);
             detailView.setVisibility(View.GONE);
-            card.addView(detailView,new LinearLayout.LayoutParams(-1,-2));
+            LinearLayout.LayoutParams detailLp=new LinearLayout.LayoutParams(-1,-2);
+            detailLp.setMargins(0,dp(10),0,0);
+            card.addView(detailView,detailLp);
             details.add(detailView);
 
             View.OnClickListener expand=v->{
