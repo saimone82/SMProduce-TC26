@@ -190,8 +190,6 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             return wrap;
         }
 
-        boolean singleLine = visibleLineCount(lines) <= 1;
-
         for (int i = 0; i < lines.length(); i++) {
             JSONObject line = lines.optJSONObject(i);
             if (line == null || !visibleLine(line)) continue;
@@ -208,16 +206,7 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             LinearLayout head = new LinearLayout(this);
             head.setGravity(Gravity.CENTER_VERTICAL);
 
-            // AND is useful only when the PO contains multiple required lines.
-            // OR is never shown as a badge: its alternatives are compacted into one product line.
-            if (!isOr && !singleLine) {
-                TextView rule = label("AND", 14, Color.WHITE);
-                rule.setTypeface(null, 1);
-                rule.setGravity(Gravity.CENTER);
-                rule.setBackgroundColor(Color.rgb(3, 105, 161));
-                head.addView(rule, new LinearLayout.LayoutParams(dp2(60), dp2(36)));
-            }
-
+            // No AND/OR badge here. The product blocks themselves separate the order lines.
             TextView q = label(qty + " CASES", 17, Color.WHITE);
             q.setTypeface(null, 1);
             q.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
@@ -453,8 +442,20 @@ public class Recovery53MultiActivity extends Recovery52MultiActivity {
             top.setGravity(Gravity.CENTER_VERTICAL);
 
             CheckBox cb = new CheckBox(this);
+            int[][] cbStates = new int[][]{
+                    new int[]{android.R.attr.state_checked},
+                    new int[]{-android.R.attr.state_checked}
+            };
+            int[] cbColors = new int[]{
+                    Color.rgb(33, 150, 243),
+                    Color.rgb(226, 232, 240)
+            };
+            cb.setButtonTintList(new android.content.res.ColorStateList(cbStates, cbColors));
+            cb.setScaleX(1.25f);
+            cb.setScaleY(1.25f);
+            cb.setGravity(Gravity.CENTER);
             cb.setOnCheckedChangeListener((buttonView, isChecked) -> checked[index] = isChecked);
-            top.addView(cb, new LinearLayout.LayoutParams(dp2(48), dp2(58)));
+            top.addView(cb, new LinearLayout.LayoutParams(dp2(56), dp2(60)));
 
             LinearLayout info = new LinearLayout(this);
             info.setOrientation(LinearLayout.VERTICAL);
