@@ -9,6 +9,7 @@ import android.media.AudioManager;
 import android.media.ToneGenerator;
 import android.net.*;
 import android.os.*;
+import android.provider.Settings;
 import android.text.InputType;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
@@ -589,7 +590,15 @@ public class MainActivity extends Activity {
         return requestUrl(BuildConfig.API_URL,data);
     }
     JSONObject requestUrl(String url,Map<String,String> data)throws Exception{
-        StringBuilder body=new StringBuilder();for(Map.Entry<String,String>e:data.entrySet()){if(body.length()>0)body.append('&');body.append(URLEncoder.encode(e.getKey(),"UTF-8")).append('=').append(URLEncoder.encode(e.getValue(),"UTF-8"));}
+        // Every server call identifies this physical Zebra. Shipment ownership /
+        // takeover depends on device_id, so never send an anonymous request.
+        Map<String,String> payload=new LinkedHashMap<>(data);
+        String androidId=Settings.Secure.getString(getContentResolver(),Settings.Secure.ANDROID_ID);
+        if(androidId==null||androidId.trim().isEmpty())androidId="unknown";
+        payload.put("device_id","TC26-"+androidId);
+        payload.put("device_model",(Build.MANUFACTURER+" "+Build.MODEL).trim());
+        payload.put("app_version",BuildConfig.VERSION_NAME);
+        StringBuilder body=new StringBuilder();for(Map.Entry<String,String>e:payload.entrySet()){if(body.length()>0)body.append('&');body.append(URLEncoder.encode(e.getKey(),"UTF-8")).append('=').append(URLEncoder.encode(e.getValue(),"UTF-8"));}
         HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();c.setConnectTimeout(3000);c.setReadTimeout(7000);c.setRequestMethod("POST");c.setDoOutput(true);c.setRequestProperty("X-App-Token",BuildConfig.APP_TOKEN);c.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");try(OutputStream o=c.getOutputStream()){o.write(body.toString().getBytes(StandardCharsets.UTF_8));}
         InputStream in=c.getResponseCode()<400?c.getInputStream():c.getErrorStream();String s=read(in);return new JSONObject(s);
     }
