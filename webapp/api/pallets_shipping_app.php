@@ -898,6 +898,41 @@ try {
                     : trim((string)($g['name']??'')),
                 (array)$policy['growers']
             ));
+
+            // PO preview for the TC26 New Shipment selector. Return the
+            // actual order lines in the same AND/OR grouping used by webapp.
+            $previewLines=[];
+            $totalCases=0;
+            foreach(orders_fetch_lines_sql((int)$orderRow['id']) as $line){
+                $qty=max(0,(int)($line['quantity']??0));
+                $totalCases+=$qty;
+                $members=[];
+                foreach((array)($line['allowed_skus']??[]) as $member){
+                    $members[]=[
+                        'sku'=>(string)($member['sku_code']??$member['sku_id']??''),
+                        'variety'=>(string)($member['variety']??''),
+                        'size'=>(string)($member['size']??''),
+                        'packaging'=>(string)($member['packaging']??''),
+                    ];
+                }
+                $previewLines[]=[
+                    'quantity'=>$qty,
+                    'is_mix'=>!empty($line['is_mix'])?1:0,
+                    'line_type'=>!empty($line['is_mix'])?'OR':'AND',
+                    'sku_display'=>(string)($line['sku_display']??''),
+                    'variety_display'=>(string)($line['variety_display']??''),
+                    'size'=>(string)($line['size']??''),
+                    'packaging_preset'=>(string)($line['packaging_preset']??''),
+                    'allowed_skus'=>$members,
+                ];
+            }
+            $orderRow['lines']=$previewLines;
+            $orderRow['line_count']=count($previewLines);
+            $orderRow['total_cases']=$totalCases;
+            $orderRow['has_mix']=count(array_filter(
+                $previewLines,
+                static fn(array $line):bool=>!empty($line['is_mix'])
+            ))>0?1:0;
         }
         unset($orderRow);
         ps_out(['ok'=>1, 'orders'=>$rows]);
