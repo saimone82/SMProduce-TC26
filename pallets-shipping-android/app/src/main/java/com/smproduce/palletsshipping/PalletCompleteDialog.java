@@ -33,10 +33,39 @@ public final class PalletCompleteDialog {
         if(context.optBoolean("needs_customer")){chooseCustomer(context.optJSONArray("customers"));return;}
         params.put("complete_client_id",context.optString("client_id","0"));params.put("complete_source_token",context.optString("source_token"));
         if(!context.optBoolean("override_required")){send("");return;}
-        JSONArray checks=context.optJSONArray("mismatches");StringBuilder message=new StringBuilder("Pallet "+pid+"\n"+context.optString("customer_name")+"\n");
-        if(checks!=null)for(int i=0;i<checks.length();i++){JSONObject c=checks.optJSONObject(i);if(c!=null)message.append("SKU ").append(c.optInt("sku_id")).append(": ").append(c.optInt("actual")).append(tr(" cases; required "," cajas; requeridas ")).append(c.optInt("required")).append("\n");}
-        message.append(tr("\nEnter the override password to close Complete, or cancel to correct the pallet.","\nIntroduzca la contraseña de anulación para cerrar Completo, o cancele para corregir el pallet."));
-        final AlertDialog warning=new AlertDialog.Builder(host).setTitle(tr("Case count mismatch","Cantidad de cajas incorrecta")).setMessage(message.toString())
+        JSONArray checks=context.optJSONArray("mismatches");
+        String customer=context.optString("customer_name");
+        StringBuilder message=new StringBuilder();
+        message.append(tr("WHY OVERRIDE IS REQUIRED","MOTIVO DE LA ANULACIÓN")).append("\n\n");
+        message.append(tr("You are trying to close this pallet as COMPLETE, but its case count does not match Pallet Rules.","Está intentando cerrar este pallet como COMPLETO, pero la cantidad de cajas no coincide con Pallet Rules.")).append("\n\n");
+        message.append(tr("Pallet: ","Pallet: ")).append(pid).append("\n");
+        if(!customer.isEmpty())message.append(tr("Customer: ","Cliente: ")).append(customer).append("\n");
+        JSONArray reasons=context.optJSONArray("override_reasons");
+        if(reasons!=null&&reasons.length()>0){
+            message.append("\n");
+            for(int i=0;i<reasons.length();i++)message.append("• ").append(reasons.optString(i)).append("\n");
+        }else if(checks!=null){
+            message.append("\n");
+            for(int i=0;i<checks.length();i++){
+                JSONObject c=checks.optJSONObject(i);if(c==null)continue;
+                int actual=c.optInt("actual"),required=c.optInt("required"),diff=actual-required;
+                String product=c.optString("variety");
+                if(!c.optString("size").isEmpty())product+=(product.isEmpty()?"":" · ")+c.optString("size");
+                if(!c.optString("packaging").isEmpty())product+=(product.isEmpty()?"":" · ")+c.optString("packaging");
+                String source="customer".equals(c.optString("source"))
+                    ? tr("customer rule","regla del cliente")
+                    : tr("SKU standard","estándar SKU");
+                message.append("• SKU ").append(c.optInt("sku_id"));
+                if(!product.isEmpty())message.append(" (").append(product).append(")");
+                message.append(": ").append(actual).append(tr(" cases loaded; "," cajas cargadas; "))
+                    .append(source).append(tr(" requires "," requiere ")).append(required).append(". ");
+                if(diff<0)message.append(Math.abs(diff)).append(tr(" case(s) short."," caja(s) faltante(s)."));
+                else message.append(diff).append(tr(" case(s) over."," caja(s) de más."));
+                message.append("\n");
+            }
+        }
+        message.append(tr("\nIf you continue, the pallet will be closed as an authorized exception and the override will be recorded. Enter the password only if you intentionally accept this exception.","\nSi continúa, el pallet se cerrará como una excepción autorizada y la anulación quedará registrada. Introduzca la contraseña solo si acepta intencionalmente esta excepción."));
+        final AlertDialog warning=new AlertDialog.Builder(host).setTitle(tr("Complete pallet override required","Se requiere anulación de pallet completo")).setMessage(message.toString())
             .setNegativeButton(tr("Back to pallet","Volver al pallet"),new DialogInterface.OnClickListener(){public void onClick(DialogInterface d,int w){finish();}})
             .setPositiveButton(tr("Override with password","Anular con contraseña"),new DialogInterface.OnClickListener(){public void onClick(DialogInterface d,int w){showPassword(context);}}).create();warning.setCancelable(false);warning.show();
     }
