@@ -284,31 +284,118 @@ function ps_shipment_private_pallets($db,string $sid,string $deviceId,bool $priv
         WHERE sp.shipment_id=? AND d.device_id=? ORDER BY d.added_at DESC,sp.id DESC",[$sid,$deviceId]);
 }
 
+function ps_line_allowed_skus(array $line): array {
+    $allowed=[];
+    foreach((array)($line['allowed_skus']??[]) as $member){
+        if(is_array($member)){
+            $sku=trim((string)($member['sku_code']??$member['sku_id']??$member['sku']??''));
+        }else{
+            $sku=trim((string)$member);
+        }
+        if($sku!=='')$allowed[$sku]=true;
+    }
+    $primary=trim((string)($line['sku_code']??$line['sku_id']??''));
+    if(!$allowed&&$primary!=='')$allowed[$primary]=true;
+    return array_keys($allowed);
+}
+
+function ps_order_line_models(int $orderId,string $po=''): array {
+    $rows=orders_sql_ready()?orders_fetch_lines_sql($orderId):[];
+    $models=[];$index=0;
+    foreach($rows as $line){
+        $allowed=ps_line_allowed_skus((array)$line);
+        if(!$allowed)continue;
+        $models[]=[
+            'index'=>$index++,
+            'order_id'=>$orderId,
+            'po'=>$po,
+            'allowed_skus'=>$allowed,
+            'is_mix'=>(!empty($line['is_mix'])||count($allowed)>1)?1:0,
+            'required'=>max(0,(int)($line['quantity']??0)),
+            'variety'=>(string)($line['variety_display']??$line['variety']??''),
+            'size'=>(string)($line['size_display']??$line['size']??''),
+            'packaging'=>(string)($line['packaging_display']??$line['packaging']??$line['packaging_preset']??''),
+        ];
+    }
+    return $models;
+}
+
+function ps_match_order_pool(array $models,array $pool): array {
+    $work=$pool;$matched=[];
+    $ordered=$models;
+    usort($ordered,static function(array $a,array $b):int{
+        $cmp=count($a['allowed_skus'])<=>count($b['allowed_skus']);
+        return $cmp!==0?$cmp:((int)$a['index']<=>(int)$b['index']);
+    });
+    foreach($ordered as $line){
+        $required=(int)$line['required'];$loaded=0;$breakdown=[];
+        foreach((array)$line['allowed_skus'] as $sku){
+            $have=(int)($work[$sku]??0);
+            if($have<=0||$loaded>=$required)continue;
+            $take=min($have,$required-$loaded);
+            if($take>0){
+                $loaded+=$take;$work[$sku]-=$take;$breakdown[$sku]=$take;
+            }
+        }
+        $matched[(int)$line['index']]=[
+            'loaded'=>$loaded,
+            'remaining'=>max(0,$required-$loaded),
+            'breakdown'=>$breakdown,
+        ];
+    }
+    return ['lines'=>$matched,'leftover'=>$work];
+}
+
 function ps_multi_status($db,string $sid): array {
     ps_multi_init($db);
     require_once __DIR__ . '/../config/orders_sql_lib.php';
     $selected=smp_db_fetch_all($db,"SELECT * FROM tc26_shipment_orders WHERE shipment_id=? ORDER BY sort_order,id",[$sid]);
-    $lines=[];$allOk=!empty($selected);$totalRequired=0;$totalLoaded=0;
+    $lines=[];$allOk=!empty($selected);$totalRequired=0;$totalLoaded=0;$allocatedExtra=0;
+
     foreach($selected as $so){
         $orderId=(int)$so['order_id'];$po=(string)$so['po'];
-        $orderLines=orders_sql_ready()?orders_fetch_lines_sql($orderId):[];
-        foreach($orderLines as $ol){
-            $sku=trim((string)($ol['sku_code']??$ol['sku_id']??''));$required=(int)($ol['quantity']??0);
-            $got=smp_db_fetch_one($db,"SELECT COUNT(*) c FROM tc26_shipment_case_allocations WHERE shipment_id=? AND order_id=? AND sku=?",[$sid,$orderId,$sku]);
-            $loaded=(int)($got['c']??0);$complete=$required>0&&$loaded===$required;
-            if(!$complete)$allOk=false;$totalRequired+=$required;$totalLoaded+=$loaded;
-            $lines[]=['order_id'=>$orderId,'po'=>$po,'sku'=>$sku,
-                'variety'=>(string)($ol['variety']??''),'size'=>(string)($ol['size']??''),
-                'packaging'=>(string)($ol['packaging']??$ol['packaging_preset']??''),
-                'required'=>$required,'loaded'=>$loaded,'remaining'=>max(0,$required-$loaded),
-                'complete'=>$complete,'over'=>$loaded>$required,'extra'=>false];
+        $models=ps_order_line_models($orderId,$po);
+        $poolRows=smp_db_fetch_all($db,
+            "SELECT sku,COUNT(*) c FROM tc26_shipment_case_allocations
+             WHERE shipment_id=? AND order_id=? GROUP BY sku",[$sid,$orderId]);
+        $pool=[];
+        foreach($poolRows as $row){
+            $sku=trim((string)($row['sku']??''));
+            if($sku!=='')$pool[$sku]=($pool[$sku]??0)+(int)($row['c']??0);
         }
+        $match=ps_match_order_pool($models,$pool);
+        foreach($models as $model){
+            $m=$match['lines'][(int)$model['index']]??['loaded'=>0,'remaining'=>(int)$model['required'],'breakdown'=>[]];
+            $required=(int)$model['required'];$loaded=(int)$m['loaded'];
+            $complete=$required>0&&$loaded===$required;
+            if(!$complete)$allOk=false;
+            $totalRequired+=$required;$totalLoaded+=$loaded;
+            $allowed=(array)$model['allowed_skus'];
+            $lines[]=[
+                'order_id'=>$orderId,'po'=>$po,
+                'sku'=>count($allowed)>1?implode(' / ',$allowed):($allowed[0]??''),
+                'allowed_skus'=>$allowed,
+                'is_mix'=>(int)$model['is_mix'],
+                'line_type'=>(int)$model['is_mix']===1?'OR':'AND',
+                'variety'=>(string)$model['variety'],
+                'size'=>(string)$model['size'],
+                'packaging'=>(string)$model['packaging'],
+                'required'=>$required,'loaded'=>$loaded,
+                'remaining'=>(int)$m['remaining'],
+                'complete'=>$complete,'over'=>false,'extra'=>false,
+                'breakdown'=>(object)$m['breakdown'],
+            ];
+        }
+        foreach((array)$match['leftover'] as $qty)$allocatedExtra+=(int)$qty;
     }
+
     $unallocated=smp_db_fetch_one($db,
         "SELECT COUNT(*) c FROM shipment_pallets sp JOIN pallet_cases pc ON pc.pallet_id=sp.pallet_id
          LEFT JOIN tc26_shipment_case_allocations a ON a.shipment_id=sp.shipment_id AND a.case_serial=pc.case_serial
          WHERE sp.shipment_id=? AND a.id IS NULL",[$sid]);
-    $extra=(int)($unallocated['c']??0);if($extra>0)$allOk=false;
+    $extra=(int)($unallocated['c']??0)+$allocatedExtra;
+    if($extra>0)$allOk=false;
+
     return ['ok'=>1,'multi_po'=>count($selected)>1?1:0,'orders'=>$selected,'sku_lines'=>$lines,
         'po_qty'=>$totalRequired,'ship_qty'=>$totalLoaded,'unallocated_cases'=>$extra,'all_ok'=>$allOk];
 }
@@ -318,15 +405,43 @@ function ps_allocate_shipment_cases($db,string $sid): array {
     require_once __DIR__ . '/../config/orders_sql_lib.php';
     $orders=smp_db_fetch_all($db,"SELECT * FROM tc26_shipment_orders WHERE shipment_id=? ORDER BY sort_order,id",[$sid]);
     if(!$orders)return ps_multi_status($db,$sid);
+
     $needs=[];
-    foreach($orders as $so){
-        foreach((orders_sql_ready()?orders_fetch_lines_sql((int)$so['order_id']):[]) as $ol){
-            $sku=trim((string)($ol['sku_code']??$ol['sku_id']??''));
-            $got=smp_db_fetch_one($db,"SELECT COUNT(*) c FROM tc26_shipment_case_allocations WHERE shipment_id=? AND order_id=? AND sku=?",[$sid,(int)$so['order_id'],$sku]);
-            $remaining=max(0,(int)$ol['quantity']-(int)($got['c']??0));
-            if($remaining>0)$needs[]=['order_id'=>(int)$so['order_id'],'po'=>(string)$so['po'],'sku'=>$sku,'remaining'=>$remaining];
+    foreach($orders as $orderSort=>$so){
+        $orderId=(int)$so['order_id'];$po=(string)$so['po'];
+        $models=ps_order_line_models($orderId,$po);
+        $poolRows=smp_db_fetch_all($db,
+            "SELECT sku,COUNT(*) c FROM tc26_shipment_case_allocations
+             WHERE shipment_id=? AND order_id=? GROUP BY sku",[$sid,$orderId]);
+        $pool=[];
+        foreach($poolRows as $row){
+            $sku=trim((string)($row['sku']??''));
+            if($sku!=='')$pool[$sku]=($pool[$sku]??0)+(int)($row['c']??0);
+        }
+        $match=ps_match_order_pool($models,$pool);
+        foreach($models as $model){
+            $m=$match['lines'][(int)$model['index']]??['remaining'=>(int)$model['required']];
+            $remaining=(int)$m['remaining'];
+            if($remaining<=0)continue;
+            $needs[]=[
+                'order_id'=>$orderId,'po'=>$po,
+                'allowed_skus'=>(array)$model['allowed_skus'],
+                'remaining'=>$remaining,
+                'constraint'=>count((array)$model['allowed_skus']),
+                'order_sort'=>(int)$orderSort,
+                'line_sort'=>(int)$model['index'],
+            ];
         }
     }
+
+    usort($needs,static function(array $a,array $b):int{
+        foreach(['constraint','order_sort','line_sort'] as $key){
+            $cmp=(int)$a[$key]<=>(int)$b[$key];
+            if($cmp!==0)return $cmp;
+        }
+        return 0;
+    });
+
     $cases=smp_db_fetch_all($db,
         "SELECT sp.pallet_id,pc.case_serial,
           COALESCE(NULLIF(CAST(pc.sku AS CHAR),''),CAST(cc.SKU AS CHAR),'') sku,
@@ -337,16 +452,19 @@ function ps_allocate_shipment_cases($db,string $sid): array {
          LEFT JOIN casecodes cc ON cc.serial=pc.case_serial
          LEFT JOIN tc26_shipment_case_allocations a ON a.shipment_id=sp.shipment_id AND a.case_serial=pc.case_serial
          WHERE sp.shipment_id=? AND a.id IS NULL ORDER BY sp.id,pc.id",[$sid]);
-    foreach($cases as $c){
-        $sku=trim((string)$c['sku']);
+
+    foreach($cases as $case){
+        $sku=trim((string)$case['sku']);
+        if($sku==='')continue;
         foreach($needs as &$need){
-            if($need['remaining']>0&&$need['sku']===$sku){
-                smp_db_exec($db,"INSERT IGNORE INTO tc26_shipment_case_allocations
-                    (shipment_id,order_id,po,pallet_id,case_serial,sku,variety,size,packaging)
-                    VALUES(?,?,?,?,?,?,?,?,?)",[$sid,$need['order_id'],$need['po'],$c['pallet_id'],$c['case_serial'],$sku,$c['variety'],$c['size'],$c['packaging']]);
-                $need['remaining']--;break;
-            }
-        }unset($need);
+            if((int)$need['remaining']<=0||!in_array($sku,(array)$need['allowed_skus'],true))continue;
+            smp_db_exec($db,"INSERT IGNORE INTO tc26_shipment_case_allocations
+                (shipment_id,order_id,po,pallet_id,case_serial,sku,variety,size,packaging)
+                VALUES(?,?,?,?,?,?,?,?,?)",
+                [$sid,$need['order_id'],$need['po'],$case['pallet_id'],$case['case_serial'],$sku,$case['variety'],$case['size'],$case['packaging']]);
+            $need['remaining']--;break;
+        }
+        unset($need);
     }
     return ps_multi_status($db,$sid);
 }
