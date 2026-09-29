@@ -3,7 +3,7 @@ name: DUMPING APK - SM Produce
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, fix/dumping-apk-history-20260929 ]
     paths:
       - 'dumpingapp/**'
       - 'settings.gradle'
