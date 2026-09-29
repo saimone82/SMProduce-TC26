@@ -1,0 +1,32 @@
+name: Verify Multi-PO OR Fix
+on:
+  push:
+    branches: [ fix/multi-po-or-rules-20260928 ]
+    paths:
+      - 'webapp/api/pallets_shipping_app.php'
+      - '.github/workflows/verify-multi-po-or.yml'
+  workflow_dispatch: {}
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PHP syntax
+        run: php -l webapp/api/pallets_shipping_app.php
+      - name: Verify OR-aware multi-PO code
+        run: |
+          grep -F "function ps_line_allowed_skus" webapp/api/pallets_shipping_app.php
+          grep -F "allowed_skus" webapp/api/pallets_shipping_app.php
+          grep -F "ps_match_order_pool" webapp/api/pallets_shipping_app.php
+          grep -F "constraint'=>count" webapp/api/pallets_shipping_app.php
+      - name: Package server file
+        run: |
+          mkdir -p package/smproduce/api
+          cp webapp/api/pallets_shipping_app.php package/smproduce/api/
+          cd package
+          zip -r ../SMProduce-TC26-MultiPO-OR-FIX.zip smproduce
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SMProduce-TC26-MultiPO-OR-FIX
+          path: package/SMProduce-TC26-MultiPO-OR-FIX.zip
+          if-no-files-found: error
