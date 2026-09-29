@@ -11,6 +11,7 @@ import android.view.*;
 import android.view.inputmethod.EditorInfo;
 import android.widget.*;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -24,7 +25,7 @@ public class MainActivity extends Activity {
     private LinearLayout root, history;
     private EditText scan;
     private TextView status, subtitle, total;
-    private Button language, settings;
+    private Button language, settings, historyButton;
     private boolean spanish;
     private int dumpedCount = 0;
     private final ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90);
@@ -142,9 +143,10 @@ public class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text("DUMPING", 28, Color.rgb(17,24,39)); title.setTypeface(null, Typeface.BOLD);
         bar.addView(title, new LinearLayout.LayoutParams(0,-2,1));
+        historyButton = new Button(this); historyButton.setTextSize(12); historyButton.setAllCaps(false); historyButton.setOnClickListener(v -> showHistory());
         language = new Button(this); language.setOnClickListener(v -> { spanish=!spanish; prefs.edit().putString("language",spanish?"es":"en").apply(); buildUi(); focusScanner(); });
         settings = new Button(this); settings.setText("⚙"); settings.setOnClickListener(v -> showSettings());
-        bar.addView(language); bar.addView(settings); root.addView(bar);
+        bar.addView(historyButton); bar.addView(language); bar.addView(settings); root.addView(bar);
 
         subtitle = text("",18,Color.DKGRAY); root.addView(subtitle);
         scan = new EditText(this); scan.setTextSize(25); scan.setSingleLine(true); scan.setHint("FBIN-000123"); scan.setImeOptions(EditorInfo.IME_ACTION_DONE); scan.setInputType(1); scan.setSelectAllOnFocus(true);
@@ -170,6 +172,7 @@ public class MainActivity extends Activity {
 
     private void refreshLabels(){
         language.setText(spanish?"EN":"ES");
+        if(historyButton!=null) historyButton.setText(spanish?"Historial":"History");
         subtitle.setText(spanish?"Escanee un bin para marcarlo como volcado":"Scan a bin to mark it as dumped");
         status.setText(spanish?"LISTO PARA ESCANEAR":"READY TO SCAN");
         total.setText((spanish?"Volcados en esta sesión: ":"Dumped this session: ")+dumpedCount);
@@ -224,6 +227,211 @@ public class MainActivity extends Activity {
             case "post_required": return spanish ? "Solicitud no válida" : "Invalid request";
             default: return spanish ? "Error del servidor" : "Server error";
         }
+    }
+
+
+    private JSONObject callHistoryApi(String scope, int groupId, int offset) throws Exception {
+        String base=prefs.getString("server","").trim();
+        if(base.isEmpty()) throw new IOException("server_not_configured");
+        if(!base.endsWith("/")) base+="/";
+        URL url=new URL(base+"api/dumping_history.php");
+        HttpURLConnection c=(HttpURLConnection)url.openConnection();
+        c.setRequestMethod("POST");
+        c.setConnectTimeout(7000);
+        c.setReadTimeout(12000);
+        c.setDoOutput(true);
+        c.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");
+        String body="api_key="+URLEncoder.encode(prefs.getString("key","SM-DUMPING-2026"),"UTF-8")
+            +"&scope="+URLEncoder.encode(scope,"UTF-8")
+            +"&grower_id="+URLEncoder.encode(String.valueOf(groupId),"UTF-8")
+            +"&offset="+URLEncoder.encode(String.valueOf(offset),"UTF-8")
+            +"&limit=100";
+        try(OutputStream os=c.getOutputStream()){os.write(body.getBytes(StandardCharsets.UTF_8));}
+        InputStream is=c.getResponseCode()<400?c.getInputStream():c.getErrorStream();
+        if(is==null) throw new IOException("empty_response");
+        BufferedReader br=new BufferedReader(new InputStreamReader(is,StandardCharsets.UTF_8));
+        StringBuilder sb=new StringBuilder(); String line;
+        while((line=br.readLine())!=null) sb.append(line);
+        if(sb.length()==0) throw new IOException("empty_response");
+        return new JSONObject(sb.toString());
+    }
+
+    private String historyError(JSONObject j) {
+        String reason=j==null?"server_error":j.optString("reason","server_error");
+        switch(reason){
+            case "invalid_key": return spanish?"Clave API no válida":"Invalid API key";
+            case "dump_timestamp_unavailable": return spanish?"Historial no disponible en el servidor":"Dumping history is not available on the server";
+            case "invalid_page": return spanish?"Página de historial no válida":"Invalid history page";
+            case "invalid_scope": return spanish?"Filtro de historial no válido":"Invalid history filter";
+            default: return spanish?"No se pudo cargar el historial":"Unable to load history";
+        }
+    }
+
+    private TextView historyRow(String value, int size, int color) {
+        TextView row=text(value,size,color);
+        row.setPadding(18,18,18,18);
+        row.setBackgroundColor(Color.WHITE);
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);
+        p.topMargin=8;
+        row.setLayoutParams(p);
+        return row;
+    }
+
+    private void showHistory() {
+        if(prefs.getString("server","").trim().isEmpty()){ showSettings(); return; }
+
+        final Dialog dialog=new Dialog(this);
+        ScrollView scroll=new ScrollView(this);
+        LinearLayout wrap=new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setPadding(22,22,22,22);
+        wrap.setBackgroundColor(Color.rgb(249,250,251));
+        scroll.addView(wrap);
+
+        LinearLayout top=new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title=text(spanish?"HISTORIAL DE VOLCADO":"DUMPING HISTORY",23,Color.rgb(17,24,39));
+        title.setTypeface(null,Typeface.BOLD);
+        top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        Button close=new Button(this); close.setText("✕"); close.setOnClickListener(v->dialog.dismiss()); top.addView(close);
+        wrap.addView(top);
+
+        TextView help=text(spanish?"Historial compartido de todos los Zebra":"Shared history from all Zebra devices",14,Color.DKGRAY);
+        wrap.addView(help);
+
+        LinearLayout scopes=new LinearLayout(this);
+        Button today=new Button(this); today.setText(spanish?"HOY":"TODAY");
+        Button all=new Button(this); all.setText(spanish?"TODO":"ALL");
+        scopes.addView(today,new LinearLayout.LayoutParams(0,-2,1));
+        scopes.addView(all,new LinearLayout.LayoutParams(0,-2,1));
+        wrap.addView(scopes);
+
+        ProgressBar progress=new ProgressBar(this); wrap.addView(progress);
+        LinearLayout list=new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); wrap.addView(list);
+
+        final String[] currentScope={"today"};
+        View.OnClickListener reload=v->{
+            currentScope[0]=(v==all)?"all":"today";
+            loadHistoryGroups(currentScope[0],list,progress);
+        };
+        today.setOnClickListener(reload); all.setOnClickListener(reload);
+
+        dialog.setContentView(scroll);
+        dialog.setOnShowListener(x->{
+            Window w=dialog.getWindow();
+            if(w!=null)w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT);
+        });
+        dialog.show();
+        loadHistoryGroups("today",list,progress);
+    }
+
+    private void loadHistoryGroups(String scope, LinearLayout list, ProgressBar progress) {
+        list.removeAllViews(); progress.setVisibility(View.VISIBLE);
+        TextView loading=historyRow(spanish?"Cargando…":"Loading…",16,Color.DKGRAY); list.addView(loading);
+        new Thread(()->{
+            try{
+                JSONObject j=callHistoryApi(scope,-1,0);
+                runOnUiThread(()->{
+                    progress.setVisibility(View.GONE); list.removeAllViews();
+                    if(!j.optBoolean("ok",false)){
+                        list.addView(historyRow("✕ "+historyError(j),16,Color.rgb(185,28,28))); return;
+                    }
+                    JSONArray groups=j.optJSONArray("grower_totals");
+                    if(groups==null||groups.length()==0){
+                        list.addView(historyRow(spanish?"No hay bins volcados":"No dumped bins",16,Color.DKGRAY)); return;
+                    }
+                    for(int i=0;i<groups.length();i++){
+                        JSONObject g=groups.optJSONObject(i); if(g==null)continue;
+                        int groupId=g.optInt("grower_id",-1);
+                        String label=g.optString("grower",spanish?"Desconocido":"Unknown");
+                        int count=g.optInt("total",0);
+                        TextView row=historyRow(label+"\n"+count+(spanish?" bin(s)":" bin(s)"),18,Color.rgb(17,24,39));
+                        row.setTypeface(null,Typeface.BOLD);
+                        row.setCompoundDrawablesWithIntrinsicBounds(0,0,android.R.drawable.ic_media_next,0);
+                        row.setOnClickListener(v->showHistoryGroup(scope,groupId,label,count));
+                        list.addView(row);
+                    }
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    progress.setVisibility(View.GONE); list.removeAllViews();
+                    list.addView(historyRow("✕ "+(spanish?"No se pudo conectar con el servidor":"Server connection failed"),16,Color.rgb(185,28,28)));
+                });
+            }
+        }).start();
+    }
+
+    private void showHistoryGroup(String scope, int groupId, String label, int expectedCount) {
+        final Dialog dialog=new Dialog(this);
+        ScrollView scroll=new ScrollView(this);
+        LinearLayout wrap=new LinearLayout(this); wrap.setOrientation(LinearLayout.VERTICAL); wrap.setPadding(22,22,22,22); wrap.setBackgroundColor(Color.rgb(249,250,251));
+        scroll.addView(wrap);
+
+        LinearLayout top=new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL);
+        Button back=new Button(this); back.setText("←"); back.setOnClickListener(v->dialog.dismiss()); top.addView(back);
+        TextView title=text(label,20,Color.rgb(17,24,39)); title.setTypeface(null,Typeface.BOLD); top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        Button close=new Button(this); close.setText("✕"); close.setOnClickListener(v->dialog.dismiss()); top.addView(close);
+        wrap.addView(top);
+
+        TextView meta=text((scope.equals("today")?(spanish?"Hoy":"Today"):(spanish?"Todo":"All"))+" · "+expectedCount+(spanish?" bin(s)":" bin(s)"),14,Color.DKGRAY);
+        wrap.addView(meta);
+
+        ProgressBar progress=new ProgressBar(this); wrap.addView(progress);
+        LinearLayout list=new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); wrap.addView(list);
+        Button more=new Button(this); more.setText(spanish?"CARGAR MÁS":"LOAD MORE"); more.setVisibility(View.GONE); wrap.addView(more);
+
+        final int[] nextOffset={0};
+        final boolean[] loading={false};
+        Runnable loader=()->loadHistoryPage(scope,groupId,nextOffset,list,progress,more,loading);
+
+        more.setOnClickListener(v->loader.run());
+        dialog.setContentView(scroll);
+        dialog.setOnShowListener(x->{
+            Window w=dialog.getWindow();
+            if(w!=null)w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT);
+        });
+        dialog.show();
+        loader.run();
+    }
+
+    private void loadHistoryPage(String scope, int groupId, int[] nextOffset, LinearLayout list, ProgressBar progress, Button more, boolean[] loading) {
+        if(loading[0])return; loading[0]=true; progress.setVisibility(View.VISIBLE); more.setVisibility(View.GONE);
+        int requestedOffset=nextOffset[0];
+        new Thread(()->{
+            try{
+                JSONObject j=callHistoryApi(scope,groupId,requestedOffset);
+                runOnUiThread(()->{
+                    loading[0]=false; progress.setVisibility(View.GONE);
+                    if(!j.optBoolean("ok",false)){
+                        list.addView(historyRow("✕ "+historyError(j),16,Color.rgb(185,28,28))); return;
+                    }
+                    JSONArray bins=j.optJSONArray("bins");
+                    if(requestedOffset==0&& (bins==null||bins.length()==0)){
+                        list.addView(historyRow(spanish?"No hay bins":"No bins",16,Color.DKGRAY)); return;
+                    }
+                    if(bins!=null){
+                        for(int i=0;i<bins.length();i++){
+                            JSONObject b=bins.optJSONObject(i); if(b==null)continue;
+                            String barcode=b.optString("barcode","");
+                            String type=b.optString("type","");
+                            String lot=b.optString("lot","");
+                            String when=b.optString("dumped_at","");
+                            StringBuilder detail=new StringBuilder("✓ ").append(barcode);
+                            if(!type.isEmpty())detail.append("\n").append(type);
+                            if(!lot.isEmpty())detail.append(type.isEmpty()?"\n":" · ").append(spanish?"Lote ":"Lot ").append(lot);
+                            if(!when.isEmpty())detail.append("\n").append(when);
+                            list.addView(historyRow(detail.toString(),16,Color.rgb(21,128,61)));
+                        }
+                        nextOffset[0]=j.optInt("offset",requestedOffset)+bins.length();
+                    }
+                    more.setVisibility(j.optBoolean("has_more",false)?View.VISIBLE:View.GONE);
+                });
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    loading[0]=false; progress.setVisibility(View.GONE);
+                    list.addView(historyRow("✕ "+(spanish?"No se pudo conectar con el servidor":"Server connection failed"),16,Color.rgb(185,28,28)));
+                });
+            }
+        }).start();
     }
 
     private void showSettings(){
