@@ -28,5 +28,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: SMProduce-TC26-MultiPO-OR-FIX
-          path: package/SMProduce-TC26-MultiPO-OR-FIX.zip
+          path: SMProduce-TC26-MultiPO-OR-FIX.zip
           if-no-files-found: error
